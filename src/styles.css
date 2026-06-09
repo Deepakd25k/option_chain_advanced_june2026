@@ -122,6 +122,21 @@ label,
   border-color: var(--soft);
 }
 
+.text-button {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 800;
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+.text-button:hover {
+  border-color: var(--soft);
+}
+
 .control-strip {
   background: rgba(23, 27, 34, 0.88);
   border: 1px solid var(--line);
@@ -240,7 +255,8 @@ input {
 .decision-metrics,
 .compact-grid,
 .event-grid,
-.advanced-grid {
+.advanced-grid,
+.calibration-grid {
   display: grid;
   gap: 10px;
 }
@@ -258,6 +274,7 @@ input {
 .compact-grid div,
 .event-card,
 .advanced-card,
+.calibration-card,
 .rule,
 .strike-card,
 .chart-card {
@@ -537,6 +554,10 @@ td {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.calibration-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .formula-grid {
   display: grid;
   gap: 12px;
@@ -544,7 +565,8 @@ td {
 }
 
 .event-card,
-.advanced-card {
+.advanced-card,
+.calibration-card {
   padding: 12px;
 }
 
@@ -568,6 +590,42 @@ td {
 
 .advanced-card.neutral {
   border-top-color: var(--violet);
+}
+
+.calibration-card {
+  border-top: 3px solid var(--line);
+  display: grid;
+  gap: 8px;
+}
+
+.calibration-card.good {
+  border-top-color: var(--green);
+}
+
+.calibration-card.warn {
+  border-top-color: var(--amber);
+}
+
+.calibration-card.bad {
+  border-top-color: var(--rose);
+}
+
+.calibration-card.neutral {
+  border-top-color: var(--violet);
+}
+
+.calibration-card p {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.calibration-card strong {
+  font-size: 1.25rem;
+}
+
+.calibration-card span {
+  color: var(--muted);
+  line-height: 1.45;
 }
 
 .advanced-card p,
@@ -644,6 +702,7 @@ td {
   .lab-grid,
   .event-grid,
   .advanced-grid,
+  .calibration-grid,
   .formula-grid {
     grid-template-columns: 1fr;
   }

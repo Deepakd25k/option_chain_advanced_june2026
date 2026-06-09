@@ -18,7 +18,8 @@
       confirmations: 0
     },
     signalStartSnapshot: null,
-    journal: []
+    journal: [],
+    calibration: loadCalibrationState()
   };
 
   const el = {};
@@ -42,7 +43,8 @@
       "moveMeter", "moveUsedText", "straddleText", "atmStrike", "atmIv",
       "atmStraddle", "pcrValue", "matrixTable", "strikeFinder",
       "straddleChart", "ivChart", "pcrChart", "straddleDelta", "ivDelta",
-      "pcrDelta", "eventGrid", "advancedEdgeGrid", "signalJournal", "chainTable"
+      "pcrDelta", "eventGrid", "advancedEdgeGrid", "signalJournal",
+      "clearCalibration", "calibrationGrid", "outcomeTable", "chainTable"
     ].forEach((id) => {
       el[id] = document.getElementById(id);
     });
@@ -62,6 +64,7 @@
   function bindEvents() {
     el.refreshButton.addEventListener("click", refresh);
     el.pauseButton.addEventListener("click", togglePause);
+    el.clearCalibration.addEventListener("click", clearCalibration);
     [el.symbolSelect, el.expiryInput, el.activeWindow, el.refreshInterval].forEach((control) => {
       control.addEventListener("change", () => {
         localStorage.setItem("instrument_key", el.symbolSelect.value);
@@ -73,6 +76,8 @@
           state.stable = { key: null, since: null, confirmations: 0 };
           state.signalStartSnapshot = null;
           state.journal = [];
+          state.calibration = freshCalibrationState();
+          saveCalibrationState();
         }
         refresh();
         scheduleNext();
@@ -242,7 +247,10 @@
     if (!latest) return;
     const active = getWindowMetrics(el.activeWindow.value);
     const decision = buildDecision(latest, active);
+    recordCalibrationSnapshot(latest, active, decision);
     updateSignalJournal(decision, latest, active);
+    updateSignalOutcomes(latest);
+    saveCalibrationState();
     renderDecision(decision, latest, active);
     renderMoveMeter(latest);
     renderMatrix();
@@ -251,6 +259,8 @@
     renderEvents(latest, active, decision);
     renderAdvancedEdge(latest, active, decision);
     renderSignalJournal();
+    renderCalibrationLab();
+    renderOutcomeTable();
     renderChain(latest, active);
   }
 
@@ -749,7 +759,7 @@
       return;
     }
 
-    state.journal.unshift({
+    const entry = {
       key,
       time: latest.time,
       lastSeen: latest.time,
@@ -761,8 +771,10 @@
       reason: decision.reasons[0] ? decision.reasons[0].text : "Signal state changed",
       spotChange: active.spotChange,
       confirmations: 1
-    });
+    };
+    state.journal.unshift(entry);
     state.journal = state.journal.slice(0, 20);
+    createCalibrationSignal(entry, decision, latest, active);
   }
 
   function readJournalQuality() {
@@ -802,6 +814,266 @@
         <td>${escapeHtml(entry.reason)}</td>
       </tr>
     `).join("");
+  }
+
+  function freshCalibrationState() {
+    return {
+      sessionDate: new Date().toISOString().slice(0, 10),
+      snapshots: [],
+      signals: []
+    };
+  }
+
+  function loadCalibrationState() {
+    try {
+      const raw = localStorage.getItem("option_cockpit_calibration");
+      if (!raw) return freshCalibrationState();
+      const parsed = JSON.parse(raw);
+      if (!parsed || parsed.sessionDate !== new Date().toISOString().slice(0, 10)) {
+        return freshCalibrationState();
+      }
+      return {
+        sessionDate: parsed.sessionDate,
+        snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots : [],
+        signals: Array.isArray(parsed.signals) ? parsed.signals : []
+      };
+    } catch (error) {
+      return freshCalibrationState();
+    }
+  }
+
+  function saveCalibrationState() {
+    try {
+      localStorage.setItem("option_cockpit_calibration", JSON.stringify(state.calibration));
+    } catch (error) {
+      state.calibration.snapshots = state.calibration.snapshots.slice(-120);
+      state.calibration.signals = state.calibration.signals.slice(0, 40);
+    }
+  }
+
+  function clearCalibration() {
+    state.calibration = freshCalibrationState();
+    state.journal = [];
+    saveCalibrationState();
+    renderCalibrationLab();
+    renderOutcomeTable();
+  }
+
+  function recordCalibrationSnapshot(latest, active, decision) {
+    const lastRecorded = state.calibration.snapshots[state.calibration.snapshots.length - 1];
+    if (lastRecorded && latest.time - lastRecorded.time < 9000) {
+      return;
+    }
+
+    state.calibration.snapshots.push({
+      time: latest.time,
+      spot: latest.spot,
+      atmStrike: latest.atmStrike,
+      atmStraddle: latest.atmStraddle,
+      atmIv: latest.atmIv,
+      pcr: latest.pcr,
+      callOi: latest.callOi,
+      putOi: latest.putOi,
+      callWall: latest.walls.callWall ? latest.walls.callWall.strike : null,
+      putWall: latest.walls.putWall ? latest.walls.putWall.strike : null,
+      marketState: decision.marketState,
+      premiumMode: decision.premiumMode,
+      bestSide: decision.bestSide,
+      confidence: decision.confidence,
+      bestStrike: decision.best ? decision.best.strike : null,
+      bestResponse: decision.best ? decision.best.response : 0,
+      spotChange: active.spotChange,
+      straddleChange: active.straddleChange,
+      ivChange: active.ivChange
+    });
+    state.calibration.snapshots = state.calibration.snapshots.slice(-720);
+  }
+
+  function createCalibrationSignal(entry, decision, latest, active) {
+    const tradableSide = decision.bestSide === "CE" || decision.bestSide === "PE";
+    const bestStrike = decision.best && tradableSide ? decision.best.strike : null;
+    const bestRow = bestStrike ? latest.rows.find((row) => row.strike === bestStrike) : null;
+    const bestOption = bestRow ? (decision.bestSide === "CE" ? bestRow.ce : bestRow.pe) : null;
+    const shouldTrack = tradableSide && decision.confidence >= 45 && bestOption;
+    if (!shouldTrack) {
+      return;
+    }
+
+    state.calibration.signals.unshift({
+      id: `${entry.time}:${decision.bestSide}:${bestStrike}`,
+      time: entry.time,
+      side: decision.bestSide,
+      strike: bestStrike,
+      confidence: decision.confidence,
+      response: decision.best.response,
+      spot: latest.spot,
+      optionLtp: bestOption.ltp,
+      atmIv: latest.atmIv,
+      atmStraddle: latest.atmStraddle,
+      reason: entry.reason,
+      checks: {
+        "180": null,
+        "300": null,
+        "600": null
+      },
+      result: "Pending"
+    });
+    state.calibration.signals = state.calibration.signals.slice(0, 60);
+  }
+
+  function updateSignalOutcomes(latest) {
+    for (const signal of state.calibration.signals) {
+      for (const seconds of [180, 300, 600]) {
+        const key = String(seconds);
+        if (signal.checks[key] || latest.time - signal.time < seconds * 1000) {
+          continue;
+        }
+
+        const row = latest.rows.find((item) => item.strike === signal.strike);
+        if (!row) continue;
+        const option = signal.side === "CE" ? row.ce : row.pe;
+        const optionMove = option.ltp - signal.optionLtp;
+        const spotMove = signal.side === "CE" ? latest.spot - signal.spot : signal.spot - latest.spot;
+        const ivMove = latest.atmIv - signal.atmIv;
+        const straddleMove = latest.atmStraddle - signal.atmStraddle;
+        const passed = optionMove > 0 && spotMove > 0;
+        signal.checks[key] = {
+          optionMove,
+          spotMove,
+          ivMove,
+          straddleMove,
+          passed
+        };
+      }
+      signal.result = summarizeSignalResult(signal);
+    }
+  }
+
+  function summarizeSignalResult(signal) {
+    const checks = Object.values(signal.checks).filter(Boolean);
+    if (!checks.length) return "Pending";
+    const wins = checks.filter((check) => check.passed).length;
+    if (wins >= 2) return "Good";
+    if (wins === 1) return "Mixed";
+    return "False";
+  }
+
+  function renderCalibrationLab() {
+    const report = buildCalibrationReport();
+    el.calibrationGrid.innerHTML = report.map((card) => `
+      <div class="calibration-card ${card.tone}">
+        <p>${card.label}</p>
+        <strong>${card.value}</strong>
+        <span>${escapeHtml(card.copy)}</span>
+      </div>
+    `).join("");
+  }
+
+  function buildCalibrationReport() {
+    const signals = state.calibration.signals;
+    const completed = signals.filter((signal) => signal.result !== "Pending");
+    const good = completed.filter((signal) => signal.result === "Good").length;
+    const falseSignals = completed.filter((signal) => signal.result === "False").length;
+    const hitRate = completed.length ? good / completed.length : 0;
+    const responseSuggestion = suggestResponseThreshold(completed);
+    const avgGoodConfidence = average(completed.filter((signal) => signal.result === "Good").map((signal) => signal.confidence));
+    const avgFalseConfidence = average(completed.filter((signal) => signal.result === "False").map((signal) => signal.confidence));
+
+    return [
+      {
+        label: "Recorded Snapshots",
+        value: String(state.calibration.snapshots.length),
+        tone: state.calibration.snapshots.length >= 30 ? "good" : "neutral",
+        copy: "Auto-saved in this browser while the dashboard stays open."
+      },
+      {
+        label: "Tracked Signals",
+        value: String(signals.length),
+        tone: signals.length >= 5 ? "good" : "warn",
+        copy: `${completed.length} completed · ${signals.length - completed.length} pending outcome checks.`
+      },
+      {
+        label: "Signal Hit Rate",
+        value: completed.length ? pct(hitRate) : "--",
+        tone: hitRate >= 0.6 ? "good" : hitRate >= 0.4 ? "warn" : "bad",
+        copy: `${good} good · ${falseSignals} false after 3m/5m/10m checks.`
+      },
+      {
+        label: "Suggested Response Gate",
+        value: responseSuggestion.value,
+        tone: responseSuggestion.tone,
+        copy: responseSuggestion.copy
+      },
+      {
+        label: "Confidence Separation",
+        value: completed.length ? `${price(avgGoodConfidence, 0)} / ${price(avgFalseConfidence, 0)}` : "--",
+        tone: avgGoodConfidence > avgFalseConfidence ? "good" : "warn",
+        copy: "Good avg confidence versus false avg confidence."
+      }
+    ];
+  }
+
+  function suggestResponseThreshold(completed) {
+    if (completed.length < 5) {
+      return {
+        value: "Collect data",
+        tone: "neutral",
+        copy: "Need at least 5 completed signals before threshold suggestion."
+      };
+    }
+
+    const thresholds = [0.45, 0.55, 0.65, 0.75, 0.85];
+    const ranked = thresholds.map((threshold) => {
+      const sample = completed.filter((signal) => signal.response >= threshold);
+      const wins = sample.filter((signal) => signal.result === "Good").length;
+      return {
+        threshold,
+        count: sample.length,
+        rate: sample.length ? wins / sample.length : 0
+      };
+    }).filter((item) => item.count >= 3).sort((a, b) => b.rate - a.rate || b.count - a.count);
+
+    if (!ranked.length) {
+      return {
+        value: "More samples",
+        tone: "warn",
+        copy: "Not enough completed signals above any response threshold yet."
+      };
+    }
+
+    const best = ranked[0];
+    return {
+      value: `>${ratio(best.threshold)}`,
+      tone: best.rate >= 0.6 ? "good" : "warn",
+      copy: `${pct(best.rate)} hit rate from ${best.count} completed samples. Suggest only, not auto-applied.`
+    };
+  }
+
+  function renderOutcomeTable() {
+    const tbody = el.outcomeTable.querySelector("tbody");
+    tbody.innerHTML = state.calibration.signals.slice(0, 14).map((signal) => `
+      <tr>
+        <td>${formatTime(signal.time)}</td>
+        <td>${escapeHtml(signal.side)}</td>
+        <td>${price(signal.strike, 0)}</td>
+        <td>${signal.confidence}%</td>
+        <td>${outcomeCell(signal.checks["180"])}</td>
+        <td>${outcomeCell(signal.checks["300"])}</td>
+        <td>${outcomeCell(signal.checks["600"])}</td>
+        <td>${resultTag(signal.result)}</td>
+      </tr>
+    `).join("");
+  }
+
+  function outcomeCell(check) {
+    if (!check) return '<span class="muted">Pending</span>';
+    const tone = check.passed ? "positive" : "negative";
+    return `<span class="${tone}">${signed(check.optionMove)} prem / ${signed(check.spotMove)} spot</span>`;
+  }
+
+  function resultTag(result) {
+    const tone = result === "Good" ? "good" : result === "Mixed" ? "warn" : result === "False" ? "bad" : "neutral";
+    return `<span class="tag ${tone}">${result}</span>`;
   }
 
   function renderChain(latest, active) {

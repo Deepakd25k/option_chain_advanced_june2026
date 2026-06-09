@@ -10,6 +10,8 @@ Formula-backed intraday option-chain dashboard for Indian index option buyers. I
 - Strike finder: formula gates for spread, liquidity, delta, response, IV, straddle, OI context, and theta.
 - Timeframe matrix: 1m, 3m, 5m, 15m, 30m, and since-open comparison.
 - Event read: since-open and since-current-signal context.
+- Advanced edge: trap detector, OI wall shift detector, and signal journal.
+- Calibration Lab: browser-local session recorder, 3m/5m/10m outcome tracking, and threshold suggestions.
 - Mobile responsive layout.
 
 ## Run Locally
@@ -69,6 +71,17 @@ https://api.upstox.com/v2/option/chain
 ## Important Architecture Note
 
 Vercel serverless functions are good for REST snapshots and polling. They are not ideal for a persistent broker WebSocket stream. This app is built to deploy cleanly on Vercel using REST polling first. A later production-grade live tick engine can be added as a separate always-on backend service.
+
+## Calibration
+
+The Calibration Lab runs automatically while the dashboard is open:
+
+- records session snapshots in browser `localStorage`
+- tracks new CE/PE decision signals
+- checks outcomes after 3 minutes, 5 minutes, and 10 minutes
+- suggests a premium-response threshold from completed samples
+
+It does not auto-change trading thresholds. Suggestions are shown for review so real-money logic stays under manual control.
 
 ## Checks
 

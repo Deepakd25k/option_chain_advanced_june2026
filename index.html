@@ -235,6 +235,43 @@
           <article class="panel span-2">
             <div class="panel-heading">
               <div>
+                <p class="eyebrow">Calibration Lab</p>
+                <h2>Auto session recording, signal outcomes, and threshold suggestions</h2>
+              </div>
+              <button class="text-button" id="clearCalibration" type="button">Clear Session</button>
+            </div>
+            <div class="calibration-grid" id="calibrationGrid"></div>
+          </article>
+
+          <article class="panel span-2">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Outcome Tracker</p>
+                <h2>3m, 5m, and 10m checks after each new decision signal</h2>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table id="outcomeTable">
+                <thead>
+                  <tr>
+                    <th>Signal Time</th>
+                    <th>Side</th>
+                    <th>Strike</th>
+                    <th>Confidence</th>
+                    <th>3m</th>
+                    <th>5m</th>
+                    <th>10m</th>
+                    <th>Result</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="panel span-2">
+            <div class="panel-heading">
+              <div>
                 <p class="eyebrow">Option Chain Intelligence</p>
                 <h2>Near-ATM strikes with response, spread, OI, and Greeks</h2>
               </div>
