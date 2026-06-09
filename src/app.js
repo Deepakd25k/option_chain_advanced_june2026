@@ -17,7 +17,8 @@
       since: null,
       confirmations: 0
     },
-    signalStartSnapshot: null
+    signalStartSnapshot: null,
+    journal: []
   };
 
   const el = {};
@@ -41,7 +42,7 @@
       "moveMeter", "moveUsedText", "straddleText", "atmStrike", "atmIv",
       "atmStraddle", "pcrValue", "matrixTable", "strikeFinder",
       "straddleChart", "ivChart", "pcrChart", "straddleDelta", "ivDelta",
-      "pcrDelta", "eventGrid", "chainTable"
+      "pcrDelta", "eventGrid", "advancedEdgeGrid", "signalJournal", "chainTable"
     ].forEach((id) => {
       el[id] = document.getElementById(id);
     });
@@ -71,6 +72,7 @@
           state.history = [];
           state.stable = { key: null, since: null, confirmations: 0 };
           state.signalStartSnapshot = null;
+          state.journal = [];
         }
         refresh();
         scheduleNext();
@@ -240,12 +242,15 @@
     if (!latest) return;
     const active = getWindowMetrics(el.activeWindow.value);
     const decision = buildDecision(latest, active);
+    updateSignalJournal(decision, latest, active);
     renderDecision(decision, latest, active);
     renderMoveMeter(latest);
     renderMatrix();
     renderStrikeFinder(latest, active);
     renderCharts();
     renderEvents(latest, active, decision);
+    renderAdvancedEdge(latest, active, decision);
+    renderSignalJournal();
     renderChain(latest, active);
   }
 
@@ -574,6 +579,228 @@
         <strong>${card.value}</strong>
         <p>${escapeHtml(card.copy)}</p>
       </div>
+    `).join("");
+  }
+
+  function renderAdvancedEdge(latest, active, decision) {
+    const trap = detectTrap(latest, active, decision);
+    const wallShift = detectWallShift(latest, active);
+    const journalRead = readJournalQuality();
+    const cards = [
+      {
+        label: "Trap Detector",
+        value: trap.title,
+        tone: trap.tone,
+        copy: trap.copy,
+        facts: trap.facts
+      },
+      {
+        label: "OI Wall Shift",
+        value: wallShift.title,
+        tone: wallShift.tone,
+        copy: wallShift.copy,
+        facts: wallShift.facts
+      },
+      {
+        label: "Replay Journal",
+        value: journalRead.title,
+        tone: journalRead.tone,
+        copy: journalRead.copy,
+        facts: journalRead.facts
+      }
+    ];
+
+    el.advancedEdgeGrid.innerHTML = cards.map((card) => `
+      <div class="advanced-card ${card.tone}">
+        <div>
+          <p>${card.label}</p>
+          <strong>${card.value}</strong>
+        </div>
+        <p>${escapeHtml(card.copy)}</p>
+        <div class="fact-list">
+          ${card.facts.map((fact) => `<span>${escapeHtml(fact)}</span>`).join("")}
+        </div>
+      </div>
+    `).join("");
+  }
+
+  function detectTrap(latest, active, decision) {
+    const spotMove = Math.abs(active.spotChange);
+    const best = decision.best;
+    const sideWallBlocked = best.side === "CE"
+      ? latest.walls.callWall && latest.walls.callWall.strike >= latest.spot && latest.walls.callWall.strike - latest.spot <= 35 && active.callOiChange > 0
+      : latest.walls.putWall && latest.walls.putWall.strike <= latest.spot && latest.spot - latest.walls.putWall.strike <= 35 && active.putOiChange > 0;
+    const weakPremium = best.response < 0.45;
+    const decay = active.straddleChange < -3 || active.ivChange < -0.5;
+    const trapRisk = spotMove >= 16 && weakPremium && decay;
+    const hardTrap = trapRisk && sideWallBlocked;
+
+    if (hardTrap) {
+      return {
+        title: "High trap risk",
+        tone: "bad",
+        copy: "Price is moving, but premium confirmation is weak while a nearby OI wall is still active.",
+        facts: [
+          `Spot move ${signed(active.spotChange)}`,
+          `${best.side} response ${ratio(best.response)}`,
+          `Straddle ${signed(active.straddleChange)}`,
+          `IV ${signed(active.ivChange)}`
+        ]
+      };
+    }
+
+    if (trapRisk) {
+      return {
+        title: "Premium not confirming",
+        tone: "warn",
+        copy: "Directional movement exists, but option premium and volatility are not fully supporting fresh buying.",
+        facts: [
+          `Spot move ${signed(active.spotChange)}`,
+          `${best.side} response ${ratio(best.response)}`,
+          `Decay check ${decay ? "active" : "clear"}`
+        ]
+      };
+    }
+
+    return {
+      title: "No major trap",
+      tone: "good",
+      copy: "No formula-backed buyer trap is active in the selected window.",
+      facts: [
+        `Spot move ${signed(active.spotChange)}`,
+        `${best.side} response ${ratio(best.response)}`,
+        `Wall block ${sideWallBlocked ? "yes" : "no"}`
+      ]
+    };
+  }
+
+  function detectWallShift(latest, active) {
+    const older = getOlderSnapshot(active.seconds);
+    const open = getOlderSnapshot(null);
+    const callShift = older && older.walls.callWall && latest.walls.callWall
+      ? latest.walls.callWall.strike - older.walls.callWall.strike
+      : 0;
+    const putShift = older && older.walls.putWall && latest.walls.putWall
+      ? latest.walls.putWall.strike - older.walls.putWall.strike
+      : 0;
+    const callOpenShift = open && open.walls.callWall && latest.walls.callWall
+      ? latest.walls.callWall.strike - open.walls.callWall.strike
+      : 0;
+    const putOpenShift = open && open.walls.putWall && latest.walls.putWall
+      ? latest.walls.putWall.strike - open.walls.putWall.strike
+      : 0;
+
+    const bothUp = callShift > 0 && putShift > 0;
+    const bothDown = callShift < 0 && putShift < 0;
+    const bullish = callShift > 0 || putShift > 0;
+    const bearish = callShift < 0 || putShift < 0;
+
+    if (bothUp) {
+      return {
+        title: "Walls shifting up",
+        tone: "good",
+        copy: "Support and resistance are migrating higher in the selected window, supporting bullish structure.",
+        facts: wallFacts(latest, callShift, putShift, callOpenShift, putOpenShift)
+      };
+    }
+
+    if (bothDown) {
+      return {
+        title: "Walls shifting down",
+        tone: "bad",
+        copy: "Support and resistance are migrating lower, warning against aggressive CE buying.",
+        facts: wallFacts(latest, callShift, putShift, callOpenShift, putOpenShift)
+      };
+    }
+
+    if (bullish || bearish) {
+      return {
+        title: bullish ? "Partial bullish shift" : "Partial bearish shift",
+        tone: "warn",
+        copy: "Only one side of the OI structure shifted. Treat this as mixed until price and premium confirm.",
+        facts: wallFacts(latest, callShift, putShift, callOpenShift, putOpenShift)
+      };
+    }
+
+    return {
+      title: "Walls stable",
+      tone: "neutral",
+      copy: "Major OI walls are not migrating in the selected window.",
+      facts: wallFacts(latest, callShift, putShift, callOpenShift, putOpenShift)
+    };
+  }
+
+  function wallFacts(latest, callShift, putShift, callOpenShift, putOpenShift) {
+    return [
+      `Call wall ${latest.walls.callWall ? price(latest.walls.callWall.strike, 0) : "--"} (${signed(callShift)})`,
+      `Put wall ${latest.walls.putWall ? price(latest.walls.putWall.strike, 0) : "--"} (${signed(putShift)})`,
+      `Open shift C ${signed(callOpenShift)} / P ${signed(putOpenShift)}`
+    ];
+  }
+
+  function updateSignalJournal(decision, latest, active) {
+    const key = `${decision.premiumMode}:${decision.bestSide}:${decision.marketState}`;
+    const lastEntry = state.journal[0];
+    if (lastEntry && lastEntry.key === key) {
+      lastEntry.lastSeen = latest.time;
+      lastEntry.confirmations += 1;
+      lastEntry.confidence = decision.confidence;
+      lastEntry.spot = latest.spot;
+      return;
+    }
+
+    state.journal.unshift({
+      key,
+      time: latest.time,
+      lastSeen: latest.time,
+      signal: decision.premiumMode,
+      side: decision.bestSide,
+      marketState: decision.marketState,
+      confidence: decision.confidence,
+      spot: latest.spot,
+      reason: decision.reasons[0] ? decision.reasons[0].text : "Signal state changed",
+      spotChange: active.spotChange,
+      confirmations: 1
+    });
+    state.journal = state.journal.slice(0, 20);
+  }
+
+  function readJournalQuality() {
+    if (!state.journal.length) {
+      return {
+        title: "Building",
+        tone: "neutral",
+        copy: "Signal journal starts once the first decision state is created.",
+        facts: ["No entries yet"]
+      };
+    }
+
+    const latest = state.journal[0];
+    const stable = latest.confirmations >= 3;
+    const noTradeCount = state.journal.filter((entry) => entry.side === "No fresh buy").length;
+    return {
+      title: stable ? "Signal stable" : "Signal building",
+      tone: stable ? "good" : "warn",
+      copy: "Use this journal to replay how the dashboard changed its read during the session.",
+      facts: [
+        `${state.journal.length} state changes`,
+        `${latest.confirmations} confirmations`,
+        `${noTradeCount} no-trade reads`
+      ]
+    };
+  }
+
+  function renderSignalJournal() {
+    const tbody = el.signalJournal.querySelector("tbody");
+    tbody.innerHTML = state.journal.slice(0, 12).map((entry) => `
+      <tr>
+        <td>${formatTime(entry.time)}</td>
+        <td>${escapeHtml(entry.signal)}</td>
+        <td>${escapeHtml(entry.side)}</td>
+        <td>${entry.confidence}%</td>
+        <td>${price(entry.spot)}</td>
+        <td>${escapeHtml(entry.reason)}</td>
+      </tr>
     `).join("");
   }
 

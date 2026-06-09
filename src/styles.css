@@ -239,7 +239,8 @@ input {
 
 .decision-metrics,
 .compact-grid,
-.event-grid {
+.event-grid,
+.advanced-grid {
   display: grid;
   gap: 10px;
 }
@@ -256,6 +257,7 @@ input {
 .decision-metrics div,
 .compact-grid div,
 .event-card,
+.advanced-card,
 .rule,
 .strike-card,
 .chart-card {
@@ -531,14 +533,68 @@ td {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.advanced-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .formula-grid {
   display: grid;
   gap: 12px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.event-card {
+.event-card,
+.advanced-card {
   padding: 12px;
+}
+
+.advanced-card {
+  border-top: 3px solid var(--line);
+  display: grid;
+  gap: 12px;
+}
+
+.advanced-card.good {
+  border-top-color: var(--green);
+}
+
+.advanced-card.warn {
+  border-top-color: var(--amber);
+}
+
+.advanced-card.bad {
+  border-top-color: var(--rose);
+}
+
+.advanced-card.neutral {
+  border-top-color: var(--violet);
+}
+
+.advanced-card p,
+.fact-list span {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.advanced-card strong {
+  display: block;
+  font-size: 1.15rem;
+  margin-top: 5px;
+}
+
+.fact-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.fact-list span {
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 6px 8px;
 }
 
 .formula-grid div {
@@ -587,6 +643,7 @@ td {
   .dashboard-grid,
   .lab-grid,
   .event-grid,
+  .advanced-grid,
   .formula-grid {
     grid-template-columns: 1fr;
   }
