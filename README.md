@@ -80,6 +80,7 @@ The Calibration Lab runs automatically while the dashboard is open:
 - tracks new CE/PE decision signals
 - checks outcomes after 3 minutes, 5 minutes, and 10 minutes
 - suggests a premium-response threshold from completed samples
+- exports the full session as a JSON report with **Export Today's Calibration**
 
 It does not auto-change trading thresholds. Suggestions are shown for review so real-money logic stays under manual control.
 

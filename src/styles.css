@@ -105,6 +105,13 @@ label,
   gap: 8px;
 }
 
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .icon-button {
   align-items: center;
   background: var(--surface-2);

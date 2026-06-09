@@ -44,7 +44,7 @@
       "atmStraddle", "pcrValue", "matrixTable", "strikeFinder",
       "straddleChart", "ivChart", "pcrChart", "straddleDelta", "ivDelta",
       "pcrDelta", "eventGrid", "advancedEdgeGrid", "signalJournal",
-      "clearCalibration", "calibrationGrid", "outcomeTable", "chainTable"
+      "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable", "chainTable"
     ].forEach((id) => {
       el[id] = document.getElementById(id);
     });
@@ -64,6 +64,7 @@
   function bindEvents() {
     el.refreshButton.addEventListener("click", refresh);
     el.pauseButton.addEventListener("click", togglePause);
+    el.exportCalibration.addEventListener("click", exportCalibration);
     el.clearCalibration.addEventListener("click", clearCalibration);
     [el.symbolSelect, el.expiryInput, el.activeWindow, el.refreshInterval].forEach((control) => {
       control.addEventListener("change", () => {
@@ -857,6 +858,52 @@
     saveCalibrationState();
     renderCalibrationLab();
     renderOutcomeTable();
+  }
+
+  function exportCalibration() {
+    const payload = buildCalibrationExport();
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `option-cockpit-calibration-${payload.sessionDate}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function buildCalibrationExport() {
+    const completed = state.calibration.signals.filter((signal) => signal.result !== "Pending");
+    const good = completed.filter((signal) => signal.result === "Good").length;
+    const mixed = completed.filter((signal) => signal.result === "Mixed").length;
+    const falseSignals = completed.filter((signal) => signal.result === "False").length;
+    const hitRate = completed.length ? good / completed.length : 0;
+    const responseSuggestion = suggestResponseThreshold(completed);
+    return {
+      app: "Option Buyer Cockpit",
+      version: "calibration-v1",
+      exportedAt: new Date().toISOString(),
+      sessionDate: state.calibration.sessionDate,
+      instrumentKey: el.symbolSelect.value,
+      expiryDate: el.expiryInput.value,
+      activeWindow: el.activeWindow.value,
+      summary: {
+        recordedSnapshots: state.calibration.snapshots.length,
+        trackedSignals: state.calibration.signals.length,
+        completedSignals: completed.length,
+        goodSignals: good,
+        mixedSignals: mixed,
+        falseSignals,
+        hitRate,
+        suggestedResponseGate: responseSuggestion.value,
+        suggestionNote: responseSuggestion.copy
+      },
+      signals: state.calibration.signals,
+      snapshots: state.calibration.snapshots,
+      journal: state.journal
+    };
   }
 
   function recordCalibrationSnapshot(latest, active, decision) {
