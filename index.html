@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101318">
+    <title>Option Buyer Cockpit</title>
+    <link rel="stylesheet" href="/src/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <div class="brand-mark">OC</div>
+          <div>
+            <h1>Option Buyer Cockpit</h1>
+            <p id="sourceLine">Formula-backed intraday Nifty option-chain read</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button class="icon-button" id="refreshButton" type="button" title="Refresh now" aria-label="Refresh now">
+            <span aria-hidden="true">↻</span>
+          </button>
+          <button class="icon-button" id="pauseButton" type="button" title="Pause live refresh" aria-label="Pause live refresh">
+            <span aria-hidden="true">Ⅱ</span>
+          </button>
+        </div>
+      </header>
+
+      <main>
+        <section class="control-strip" aria-label="Data controls">
+          <label>
+            Symbol
+            <select id="symbolSelect">
+              <option value="NSE_INDEX|Nifty 50">NIFTY50</option>
+              <option value="NSE_INDEX|Nifty Bank">BANKNIFTY</option>
+              <option value="NSE_INDEX|Nifty Fin Service">FINNIFTY</option>
+            </select>
+          </label>
+          <label>
+            Expiry
+            <input id="expiryInput" type="date">
+          </label>
+          <label>
+            Window
+            <select id="activeWindow">
+              <option value="60">1 Min</option>
+              <option value="180">3 Min</option>
+              <option value="300" selected>5 Min</option>
+              <option value="900">15 Min</option>
+              <option value="1800">30 Min</option>
+              <option value="open">Since Open</option>
+            </select>
+          </label>
+          <label>
+            Refresh
+            <select id="refreshInterval">
+              <option value="10000">10 sec</option>
+              <option value="20000" selected>20 sec</option>
+              <option value="30000">30 sec</option>
+              <option value="60000">60 sec</option>
+            </select>
+          </label>
+        </section>
+
+        <section class="hero-grid">
+          <article class="panel decision-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Decision Card</p>
+                <h2 id="decisionTitle">Loading market read</h2>
+              </div>
+              <span class="status-pill" id="stabilityPill">Building</span>
+            </div>
+            <p class="decision-copy" id="decisionCopy">Waiting for the first option-chain snapshot.</p>
+            <div class="decision-metrics">
+              <div>
+                <span>Market State</span>
+                <strong id="marketState">--</strong>
+              </div>
+              <div>
+                <span>Premium Mode</span>
+                <strong id="premiumMode">--</strong>
+              </div>
+              <div>
+                <span>Best Side</span>
+                <strong id="bestSide">--</strong>
+              </div>
+              <div>
+                <span>Confidence</span>
+                <strong id="confidenceScore">--</strong>
+              </div>
+            </div>
+            <div class="rule-stack" id="decisionReasons"></div>
+          </article>
+
+          <article class="panel meter-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Move Left</p>
+                <h2 id="moveLeftLabel">--</h2>
+              </div>
+              <span class="status-pill neutral" id="spotPill">NIFTY --</span>
+            </div>
+            <div class="meter">
+              <div class="meter-track">
+                <div class="meter-fill" id="moveMeter"></div>
+              </div>
+              <div class="meter-labels">
+                <span id="moveUsedText">Used --</span>
+                <span id="straddleText">Straddle --</span>
+              </div>
+            </div>
+            <div class="compact-grid">
+              <div><span>ATM Strike</span><strong id="atmStrike">--</strong></div>
+              <div><span>ATM IV</span><strong id="atmIv">--</strong></div>
+              <div><span>ATM Straddle</span><strong id="atmStraddle">--</strong></div>
+              <div><span>PCR</span><strong id="pcrValue">--</strong></div>
+            </div>
+          </article>
+        </section>
+
+        <section class="dashboard-grid">
+          <article class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Timeframe Matrix</p>
+                <h2>Trend, OI, IV, straddle, premium response</h2>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table id="matrixTable">
+                <thead>
+                  <tr>
+                    <th>Metric</th>
+                    <th>1m</th>
+                    <th>3m</th>
+                    <th>5m</th>
+                    <th>15m</th>
+                    <th>30m</th>
+                    <th>Open</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Strike Finder</p>
+                <h2>Formula gates, not random calls</h2>
+              </div>
+            </div>
+            <div class="strike-finder" id="strikeFinder"></div>
+          </article>
+
+          <article class="panel span-2">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Premium Lab</p>
+                <h2>Actual premium response versus expected delta move</h2>
+              </div>
+            </div>
+            <div class="lab-grid">
+              <div class="chart-card">
+                <div class="chart-title">
+                  <span>ATM Straddle</span>
+                  <strong id="straddleDelta">--</strong>
+                </div>
+                <div id="straddleChart" class="line-chart"></div>
+              </div>
+              <div class="chart-card">
+                <div class="chart-title">
+                  <span>ATM IV</span>
+                  <strong id="ivDelta">--</strong>
+                </div>
+                <div id="ivChart" class="line-chart"></div>
+              </div>
+              <div class="chart-card">
+                <div class="chart-title">
+                  <span>PCR</span>
+                  <strong id="pcrDelta">--</strong>
+                </div>
+                <div id="pcrChart" class="line-chart"></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel span-2">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Event Read</p>
+                <h2>Since open and since current signal started</h2>
+              </div>
+            </div>
+            <div class="event-grid" id="eventGrid"></div>
+          </article>
+
+          <article class="panel span-2">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Option Chain Intelligence</p>
+                <h2>Near-ATM strikes with response, spread, OI, and Greeks</h2>
+              </div>
+            </div>
+            <div class="table-wrap chain-wrap">
+              <table id="chainTable">
+                <thead>
+                  <tr>
+                    <th class="ce-head">CE OI</th>
+                    <th class="ce-head">CE Chg</th>
+                    <th>CE LTP</th>
+                    <th>CE Δ</th>
+                    <th>CE Resp</th>
+                    <th>CE Spread</th>
+                    <th class="strike-head">Strike</th>
+                    <th>PE Spread</th>
+                    <th>PE Resp</th>
+                    <th>PE Δ</th>
+                    <th>PE LTP</th>
+                    <th class="pe-head">PE Chg</th>
+                    <th class="pe-head">PE OI</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="panel span-2">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Formula Rulebook</p>
+                <h2>Visible rules behind confidence and no-trade filters</h2>
+              </div>
+            </div>
+            <div class="formula-grid">
+              <div>
+                <strong>Move Left</strong>
+                <code>atm_straddle = ATM CE LTP + ATM PE LTP</code>
+                <code>move_left_pct = (atm_straddle - abs(spot - day_open)) / atm_straddle</code>
+              </div>
+              <div>
+                <strong>Premium Response</strong>
+                <code>expected = favorable_spot_move * abs(delta)</code>
+                <code>response = actual_option_move / expected</code>
+              </div>
+              <div>
+                <strong>Trade Confidence</strong>
+                <code>confidence = passed_formula_gates / total_gates</code>
+                <code>gates = direction, spread, liquidity, delta, response, straddle, IV, OI, theta</code>
+              </div>
+              <div>
+                <strong>Stability</strong>
+                <code>same_signal_key must persist across refreshes</code>
+                <code>status = building until repeated confirmations hold</code>
+              </div>
+            </div>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <script src="/src/app.js"></script>
+  </body>
+</html>
