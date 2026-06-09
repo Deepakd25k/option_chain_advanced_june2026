@@ -11,6 +11,7 @@ Formula-backed intraday option-chain dashboard for Indian index option buyers. I
 - Timeframe matrix: 1m, 3m, 5m, 15m, 30m, and since-open comparison.
 - Event read: since-open and since-current-signal context.
 - Advanced edge: trap detector, OI wall shift detector, and signal journal.
+- Strike Flow Watch: covering, writing, long buildup, and long unwinding on ATM/wall/best strikes with confidence filters.
 - Calibration Lab: browser-local session recorder, 3m/5m/10m outcome tracking, and threshold suggestions.
 - Mobile responsive layout.
 
@@ -83,6 +84,17 @@ The Calibration Lab runs automatically while the dashboard is open:
 - exports the full session as a JSON report with **Export Today's Calibration**
 
 It does not auto-change trading thresholds. Suggestions are shown for review so real-money logic stays under manual control.
+
+## Strike Flow Classification
+
+The Strike Flow Watch classifies only important strikes such as ATM, call wall, put wall, and the current best strike:
+
+- premium up + OI up = long buildup
+- premium down + OI up = writing / short buildup
+- premium up + OI down = short covering
+- premium down + OI down = long unwinding
+
+Small changes are labeled as noise. A visible flow needs enough OI change, enough premium change, acceptable spread, liquidity, and direction context.
 
 ## Checks
 

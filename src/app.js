@@ -43,7 +43,7 @@
       "moveMeter", "moveUsedText", "straddleText", "atmStrike", "atmIv",
       "atmStraddle", "pcrValue", "matrixTable", "strikeFinder",
       "straddleChart", "ivChart", "pcrChart", "straddleDelta", "ivDelta",
-      "pcrDelta", "eventGrid", "advancedEdgeGrid", "signalJournal",
+      "pcrDelta", "eventGrid", "advancedEdgeGrid", "strikeFlowGrid", "signalJournal",
       "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable", "chainTable"
     ].forEach((id) => {
       el[id] = document.getElementById(id);
@@ -259,6 +259,7 @@
     renderCharts();
     renderEvents(latest, active, decision);
     renderAdvancedEdge(latest, active, decision);
+    renderStrikeFlowWatch(latest, active, decision);
     renderSignalJournal();
     renderCalibrationLab();
     renderOutcomeTable();
@@ -747,6 +748,163 @@
       `Put wall ${latest.walls.putWall ? price(latest.walls.putWall.strike, 0) : "--"} (${signed(putShift)})`,
       `Open shift C ${signed(callOpenShift)} / P ${signed(putOpenShift)}`
     ];
+  }
+
+  function renderStrikeFlowWatch(latest, active, decision) {
+    const rows = importantFlowRows(latest, decision);
+    const flows = rows.flatMap((item) => [
+      classifyOptionFlow(latest, active, item.strike, "CE", item.label),
+      classifyOptionFlow(latest, active, item.strike, "PE", item.label)
+    ]);
+
+    const ranked = flows
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 6);
+
+    el.strikeFlowGrid.innerHTML = ranked.map((flow) => `
+      <div class="flow-card ${flow.tone}">
+        <header>
+          <span>${escapeHtml(flow.context)}</span>
+          <strong>${flow.side} ${price(flow.strike, 0)}</strong>
+        </header>
+        <h3>${escapeHtml(flow.title)}</h3>
+        <p>${escapeHtml(flow.meaning)}</p>
+        <div class="fact-list">
+          <span>Prem ${signed(flow.priceChange)}</span>
+          <span>OI ${compact(flow.oiChange)}</span>
+          <span>Spread ${pct(flow.spreadPct)}</span>
+          <span>${flow.confidence}% conf</span>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  function importantFlowRows(latest, decision) {
+    const strikes = [
+      { strike: latest.atmStrike, label: "ATM" },
+      latest.walls.callWall ? { strike: latest.walls.callWall.strike, label: "Call Wall" } : null,
+      latest.walls.putWall ? { strike: latest.walls.putWall.strike, label: "Put Wall" } : null,
+      decision.best && decision.best.strike ? { strike: decision.best.strike, label: "Best Strike" } : null
+    ].filter(Boolean);
+
+    const seen = new Set();
+    return strikes.filter((item) => {
+      if (seen.has(item.strike)) return false;
+      seen.add(item.strike);
+      return latest.rows.some((row) => row.strike === item.strike);
+    });
+  }
+
+  function classifyOptionFlow(latest, active, strike, side, context) {
+    const older = getOlderSnapshot(active.seconds);
+    const row = latest.rows.find((item) => item.strike === strike);
+    const olderRow = older ? older.rows.find((item) => item.strike === strike) : null;
+    const option = row ? (side === "CE" ? row.ce : row.pe) : null;
+    const olderOption = olderRow ? (side === "CE" ? olderRow.ce : olderRow.pe) : null;
+
+    if (!row || !olderRow || !option || !olderOption || older === latest) {
+      return neutralFlow(strike, side, context, "Building flow history");
+    }
+
+    const priceChange = option.ltp - olderOption.ltp;
+    const oiChange = option.oi - olderOption.oi;
+    const oiChangePct = olderOption.oi ? Math.abs(oiChange) / olderOption.oi : 0;
+    const enoughOi = Math.abs(oiChange) >= Math.max(50000, olderOption.oi * 0.015);
+    const enoughPrice = Math.abs(priceChange) >= Math.max(0.75, option.ltp * 0.006);
+    const spreadOk = option.spreadPct > 0 && option.spreadPct <= 0.025;
+    const activeVolume = option.volume >= 25000 || option.oi >= 100000;
+    const directionAligned = side === "CE" ? active.spotChange >= -8 : active.spotChange <= 8;
+    const confidence = Math.round([
+      enoughOi,
+      enoughPrice,
+      spreadOk,
+      activeVolume,
+      directionAligned
+    ].filter(Boolean).length / 5 * 100);
+
+    const flow = nameOptionFlow(side, priceChange, oiChange);
+    const lowSignal = confidence < 60 || !enoughOi || !enoughPrice || !spreadOk || !activeVolume;
+    if (lowSignal) {
+      return {
+        strike,
+        side,
+        context,
+        title: "Noise / wait",
+        meaning: `${flow.title} pattern is visible, but change size or confidence is not strong enough.`,
+        tone: "neutral",
+        confidence,
+        priceChange,
+        oiChange,
+        oiChangePct,
+        spreadPct: option.spreadPct
+      };
+    }
+
+    return {
+      strike,
+      side,
+      context,
+      title: flow.title,
+      meaning: flow.meaning,
+      tone: flow.tone,
+      confidence,
+      priceChange,
+      oiChange,
+      oiChangePct,
+      spreadPct: option.spreadPct
+    };
+  }
+
+  function nameOptionFlow(side, priceChange, oiChange) {
+    if (priceChange > 0 && oiChange > 0) {
+      return {
+        title: `${side} long buildup`,
+        meaning: "Premium and OI both increased, showing fresh aggressive participation.",
+        tone: side === "CE" ? "good" : "bad"
+      };
+    }
+    if (priceChange < 0 && oiChange > 0) {
+      return {
+        title: `${side} writing / short buildup`,
+        meaning: "OI increased while premium fell, suggesting writers are pressing this strike.",
+        tone: side === "CE" ? "bad" : "good"
+      };
+    }
+    if (priceChange > 0 && oiChange < 0) {
+      return {
+        title: `${side} short covering`,
+        meaning: "Premium rose while OI fell, suggesting short writers are exiting.",
+        tone: side === "CE" ? "good" : "bad"
+      };
+    }
+    if (priceChange < 0 && oiChange < 0) {
+      return {
+        title: `${side} long unwinding`,
+        meaning: "Premium and OI both fell, showing long-side exit or fading participation.",
+        tone: side === "CE" ? "bad" : "good"
+      };
+    }
+    return {
+      title: `${side} neutral flow`,
+      meaning: "No clear buildup, covering, writing, or unwinding pattern.",
+      tone: "neutral"
+    };
+  }
+
+  function neutralFlow(strike, side, context, meaning) {
+    return {
+      strike,
+      side,
+      context,
+      title: "Building",
+      meaning,
+      tone: "neutral",
+      confidence: 0,
+      priceChange: 0,
+      oiChange: 0,
+      oiChangePct: 0,
+      spreadPct: 0
+    };
   }
 
   function updateSignalJournal(decision, latest, active) {

@@ -263,6 +263,7 @@ input {
 .compact-grid,
 .event-grid,
 .advanced-grid,
+.flow-grid,
 .calibration-grid {
   display: grid;
   gap: 10px;
@@ -281,6 +282,7 @@ input {
 .compact-grid div,
 .event-card,
 .advanced-card,
+.flow-card,
 .calibration-card,
 .rule,
 .strike-card,
@@ -561,6 +563,10 @@ td {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.flow-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .calibration-grid {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
@@ -573,6 +579,7 @@ td {
 
 .event-card,
 .advanced-card,
+.flow-card,
 .calibration-card {
   padding: 12px;
 }
@@ -597,6 +604,45 @@ td {
 
 .advanced-card.neutral {
   border-top-color: var(--violet);
+}
+
+.flow-card {
+  border-left: 3px solid var(--line);
+  display: grid;
+  gap: 10px;
+}
+
+.flow-card.good {
+  border-left-color: var(--green);
+}
+
+.flow-card.warn {
+  border-left-color: var(--amber);
+}
+
+.flow-card.bad {
+  border-left-color: var(--rose);
+}
+
+.flow-card.neutral {
+  border-left-color: var(--violet);
+}
+
+.flow-card header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.flow-card header span,
+.flow-card p {
+  color: var(--muted);
+}
+
+.flow-card h3 {
+  font-size: 1rem;
+  margin: 0;
 }
 
 .calibration-card {
@@ -709,6 +755,7 @@ td {
   .lab-grid,
   .event-grid,
   .advanced-grid,
+  .flow-grid,
   .calibration-grid,
   .formula-grid {
     grid-template-columns: 1fr;
