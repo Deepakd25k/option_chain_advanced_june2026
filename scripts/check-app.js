@@ -6,6 +6,10 @@ const requiredFiles = [
   "src/styles.css",
   "src/app.js",
   "api/upstox/option-chain.js",
+  "api/session/history.js",
+  "api/cron/capture.js",
+  "lib/session-store.js",
+  "db/schema.sql",
   "scripts/dev-server.js",
   "vercel.json",
   "package.json"

@@ -20,24 +20,33 @@
     },
     signalStartSnapshot: null,
     journal: [],
-    calibration: loadCalibrationState()
+    calibration: loadCalibrationState(),
+    recorder: {
+      configured: null,
+      snapshotCount: 0,
+      firstSavedAt: null,
+      lastSavedAt: null,
+      message: "Checking database"
+    }
   };
 
   const el = {};
 
   document.addEventListener("DOMContentLoaded", init);
 
-  function init() {
+  async function init() {
     bindElements();
     restoreControls();
     bindEvents();
-    loadExpiries().then(refresh);
+    await loadExpiries();
+    await hydrateSessionHistory();
+    await refresh();
     scheduleNext();
   }
 
   function bindElements() {
     [
-      "sourceLine", "refreshButton", "pauseButton", "symbolSelect", "expiryInput",
+      "sourceLine", "recorderStatus", "refreshButton", "pauseButton", "symbolSelect", "expiryInput",
       "activeWindow", "refreshInterval", "decisionTitle", "decisionCopy",
       "stabilityPill", "marketState", "premiumMode", "bestSide",
       "confidenceScore", "decisionReasons", "moveLeftLabel", "spotPill",
@@ -77,13 +86,15 @@
       localStorage.setItem("instrument_key", el.symbolSelect.value);
       resetSessionState();
       await loadExpiries();
+      await hydrateSessionHistory();
       await refresh();
       scheduleNext();
     });
-    el.expiryInput.addEventListener("change", () => {
+    el.expiryInput.addEventListener("change", async () => {
       localStorage.setItem("expiry_date", el.expiryInput.value);
       resetSessionState();
-      refresh();
+      await hydrateSessionHistory();
+      await refresh();
       scheduleNext();
     });
     [el.symbolSelect, el.expiryInput, el.activeWindow, el.refreshInterval].forEach((control) => {
@@ -101,6 +112,9 @@
     state.stable = { key: null, since: null, confirmations: 0 };
     state.signalStartSnapshot = null;
     state.journal = [];
+    state.recorder.snapshotCount = 0;
+    state.recorder.firstSavedAt = null;
+    state.recorder.lastSavedAt = null;
     state.calibration = freshCalibrationState();
     saveCalibrationState();
   }
@@ -146,8 +160,9 @@
         localStorage.setItem("expiry_date", payload.expiry);
       }
       addSnapshot(snapshot);
+      updateRecorderFromSave(payload.recorder, snapshot.time);
       render();
-      setSource(`${payload.source === "live" ? "Live Upstox REST" : "Demo mode"} · ${formatTime(snapshot.time)} · ${state.history.length} snapshots`);
+      setSource(`${payload.source === "live" ? "Live Upstox REST" : "Demo mode"} · ${formatTime(snapshot.time)} · ${state.history.length} loaded`);
     } catch (error) {
       setSource(`Data error: ${error.message}`);
       if (!state.history.length) {
@@ -156,6 +171,73 @@
         render();
       }
     }
+  }
+
+  async function hydrateSessionHistory() {
+    if (!el.expiryInput.value || el.expiryInput.value === "auto") {
+      updateRecorderStatus({ configured: null, message: "Waiting for expiry" });
+      return;
+    }
+
+    try {
+      updateRecorderStatus({ configured: null, message: "Loading session" });
+      const params = new URLSearchParams({
+        instrument_key: el.symbolSelect.value,
+        expiry_date: el.expiryInput.value
+      });
+      const response = await fetch(`/api/session/history?${params.toString()}`, { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) {
+        updateRecorderStatus({ configured: payload.configured, message: payload.error });
+        throw new Error(payload.error || "Unable to restore session history");
+      }
+
+      state.history = [];
+      (payload.snapshots || []).forEach((storedPayload) => {
+        addSnapshot(normalizeSnapshot(storedPayload));
+      });
+      updateRecorderStatus({
+        configured: payload.configured,
+        snapshotCount: number(payload.snapshotCount),
+        firstSavedAt: payload.firstSavedAt,
+        lastSavedAt: payload.lastSavedAt,
+        message: payload.configured ? "Session restored" : payload.reason
+      });
+      if (state.history.length) {
+        setSource(`Restored ${state.history.length} DB snapshots · ${payload.snapshotCount} saved today`);
+      }
+    } catch (error) {
+      updateRecorderStatus({
+        configured: state.recorder.configured,
+        message: error.message
+      });
+    }
+  }
+
+  function updateRecorderFromSave(recorder, snapshotTime) {
+    if (!recorder) return;
+    const savedCount = recorder.inserted ? state.recorder.snapshotCount + 1 : state.recorder.snapshotCount;
+    updateRecorderStatus({
+      configured: recorder.configured,
+      snapshotCount: savedCount,
+      firstSavedAt: state.recorder.firstSavedAt || (recorder.inserted ? recorder.capturedAt || snapshotTime : null),
+      lastSavedAt: recorder.saved ? recorder.capturedAt || snapshotTime : state.recorder.lastSavedAt,
+      message: recorder.saved ? "Recording" : recorder.reason
+    });
+  }
+
+  function updateRecorderStatus(next) {
+    state.recorder = { ...state.recorder, ...next };
+    if (!el.recorderStatus) return;
+    const { configured, snapshotCount, lastSavedAt, message } = state.recorder;
+    const active = configured && lastSavedAt;
+    el.recorderStatus.className = `recorder-pill ${active ? "active" : configured === false ? "off" : ""}`;
+    el.recorderStatus.textContent = active
+      ? `DB ${snapshotCount} · ${formatTime(new Date(lastSavedAt).getTime())}`
+      : configured === false
+        ? "DB setup needed"
+        : "DB checking";
+    el.recorderStatus.title = message || "Server session recorder status";
   }
 
   async function loadExpiries() {
@@ -212,7 +294,7 @@
     } else {
       state.history[state.history.length - 1] = snapshot;
     }
-    const cutoff = Date.now() - 6 * 60 * 60 * 1000;
+    const cutoff = Date.now() - 8 * 60 * 60 * 1000;
     state.history = state.history.filter((item) => item.time >= cutoff);
   }
 
@@ -561,6 +643,7 @@
       const flowRows = rows.map((row) => buildAtmFlowRow(latest, older, row));
       return {
         ...windowItem,
+        available: Boolean(older && older !== latest),
         rows: flowRows,
         summary: summarizeAtmFlow(flowRows)
       };
@@ -598,12 +681,22 @@
   }
 
   function buildPreSignalRead(models) {
-    const scored = models.map((model) => ({
+    const scored = models.filter((model) => model.available).map((model) => ({
       label: model.label,
       direction: model.summary.bias,
       score: model.summary.score,
       reason: model.summary.reason
     }));
+    if (scored.length < 3) {
+      return {
+        state: "Building History",
+        confidence: 0,
+        agreement: `${scored.length}/5 windows ready`,
+        reason: "waiting for exact rolling baselines",
+        trigger: "Trigger: at least 3 valid windows",
+        tone: "muted"
+      };
+    }
     const bullish = scored.filter((item) => item.direction === "Bullish").length;
     const bearish = scored.filter((item) => item.direction === "Bearish").length;
     const mixed = scored.length - bullish - bearish;
@@ -848,8 +941,9 @@
         <td>${row.label}</td>
         ${WINDOWS.map((windowItem) => {
           const metrics = getWindowMetrics(windowItem.key);
-          const value = row.getter(metrics);
-          return `<td class="${value.startsWith("-") ? "negative" : value === "0.00" ? "" : "positive"}">${value}</td>`;
+          const value = metrics.available ? row.getter(metrics) : "Building";
+          const tone = value.startsWith("-") ? "negative" : value === "0.00" || value === "Building" ? "" : "positive";
+          return `<td class="${tone}">${value}</td>`;
         }).join("")}
       </tr>
     `).join("");
@@ -1725,18 +1819,26 @@
   function getWindowMetrics(key) {
     const latest = lastSnapshot();
     const older = getOlderSnapshot(key === "open" ? null : Number(key));
-    if (!latest || !older) {
+    if (!latest || !older || older === latest) {
       return emptyMetrics(key);
     }
     return diffSnapshots(latest, older, key === "open" ? null : Number(key));
   }
 
   function diffSnapshots(latest, older, seconds) {
+    const olderAtCurrentStrike = older.rows.find((row) => row.strike === latest.atmStrike);
+    const olderStraddle = olderAtCurrentStrike
+      ? olderAtCurrentStrike.ce.ltp + olderAtCurrentStrike.pe.ltp
+      : older.atmStraddle;
+    const olderIv = olderAtCurrentStrike
+      ? average([olderAtCurrentStrike.ce.iv, olderAtCurrentStrike.pe.iv])
+      : older.atmIv;
     return {
       seconds,
+      available: true,
       spotChange: latest.spot - older.spot,
-      straddleChange: latest.atmStraddle - older.atmStraddle,
-      ivChange: latest.atmIv - older.atmIv,
+      straddleChange: latest.atmStraddle - olderStraddle,
+      ivChange: latest.atmIv - olderIv,
       pcrChange: latest.pcr - older.pcr,
       callOiChange: latest.callOi - older.callOi,
       putOiChange: latest.putOi - older.putOi
@@ -1746,6 +1848,7 @@
   function emptyMetrics(seconds) {
     return {
       seconds,
+      available: false,
       spotChange: 0,
       straddleChange: 0,
       ivChange: 0,
@@ -1757,17 +1860,37 @@
 
   function getOlderSnapshot(seconds) {
     if (!state.history.length) return null;
-    if (!seconds) return state.history[0];
-    const target = Date.now() - seconds * 1000;
-    let older = state.history[0];
-    for (const snapshot of state.history) {
-      if (snapshot.time <= target) {
-        older = snapshot;
-      } else {
-        break;
-      }
+    if (!seconds) {
+      const opening = state.history[0];
+      if (state.recorder.configured && !isOpeningSnapshot(opening)) return null;
+      return opening;
     }
-    return older;
+    const latest = lastSnapshot();
+    const toleranceMs = 45 * 1000;
+    const requiredSpanMs = seconds * 1000;
+    if (!latest || latest.time - state.history[0].time < requiredSpanMs - toleranceMs) return null;
+    const target = latest.time - requiredSpanMs;
+    const nearest = state.history.reduce((best, snapshot) => {
+      const distance = Math.abs(snapshot.time - target);
+      if (!best || distance < best.distance) return { snapshot, distance };
+      return best;
+    }, null);
+    return nearest && nearest.distance <= toleranceMs ? nearest.snapshot : null;
+  }
+
+  function isOpeningSnapshot(snapshot) {
+    if (!snapshot) return false;
+    const parts = new Intl.DateTimeFormat("en-IN", {
+      timeZone: "Asia/Kolkata",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(new Date(snapshot.time)).reduce((result, part) => {
+      result[part.type] = part.value;
+      return result;
+    }, {});
+    const minute = Number(parts.hour) * 60 + Number(parts.minute);
+    return minute >= 9 * 60 + 15 && minute <= 9 * 60 + 18;
   }
 
   function lastSnapshot() {

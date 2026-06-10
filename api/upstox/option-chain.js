@@ -1,5 +1,6 @@
 const UPSTOX_OPTION_CHAIN_URL = "https://api.upstox.com/v2/option/chain";
 const UPSTOX_OPTION_CONTRACT_URL = "https://api.upstox.com/v2/option/contract";
+const { saveMarketSnapshot } = require("../../lib/session-store");
 
 module.exports = async function handler(req, res) {
   setJsonHeaders(res);
@@ -16,38 +17,13 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const expiryDate = requestedExpiry === "auto"
-      ? await resolveNearestExpiry(instrumentKey, token)
-      : requestedExpiry;
-    const url = new URL(UPSTOX_OPTION_CHAIN_URL);
-    url.searchParams.set("instrument_key", instrumentKey);
-    url.searchParams.set("expiry_date", expiryDate);
-
-    const response = await fetch(url, {
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${token}`
-      }
-    });
-
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      return sendJson(res, response.status, {
-        source: "live",
-        error: payload.message || payload.error || "Upstox option-chain request failed",
-        details: payload
-      });
-    }
-
-    return sendJson(res, 200, {
-      source: "live",
-      generatedAt: new Date().toISOString(),
-      instrumentKey,
-      expiry: expiryDate,
-      availableExpiries: [],
-      underlying: inferUnderlying(payload.data || []),
-      data: payload.data || []
-    });
+    const result = await fetchLivePayload(instrumentKey, requestedExpiry, token);
+    result.recorder = await saveMarketSnapshot(result).catch((error) => ({
+      configured: Boolean(process.env.DATABASE_URL),
+      saved: false,
+      reason: error.message || "Database save failed"
+    }));
+    return sendJson(res, 200, result);
   } catch (error) {
     return sendJson(res, 502, {
       source: "live",
@@ -55,6 +31,36 @@ module.exports = async function handler(req, res) {
     });
   }
 };
+
+async function fetchLivePayload(instrumentKey, requestedExpiry, token) {
+  const expiryDate = requestedExpiry === "auto"
+    ? await resolveNearestExpiry(instrumentKey, token)
+    : requestedExpiry;
+  const url = new URL(UPSTOX_OPTION_CHAIN_URL);
+  url.searchParams.set("instrument_key", instrumentKey);
+  url.searchParams.set("expiry_date", expiryDate);
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`
+    }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.message || payload.error || "Upstox option-chain request failed");
+  }
+
+  return {
+    source: "live",
+    generatedAt: new Date().toISOString(),
+    instrumentKey,
+    expiry: expiryDate,
+    availableExpiries: [],
+    underlying: inferUnderlying(payload.data || []),
+    data: payload.data || []
+  };
+}
 
 async function resolveNearestExpiry(instrumentKey, token) {
   const url = new URL(UPSTOX_OPTION_CONTRACT_URL);
@@ -105,7 +111,7 @@ function inferUnderlying(rows) {
     : 0;
   return {
     spot,
-    dayOpen: spot
+    dayOpen: 0
   };
 }
 
@@ -214,3 +220,6 @@ function round(value, decimals = 2) {
   const factor = 10 ** decimals;
   return Math.round(value * factor) / factor;
 }
+
+module.exports.fetchLivePayload = fetchLivePayload;
+module.exports.resolveNearestExpiry = resolveNearestExpiry;

@@ -101,8 +101,32 @@ label,
 }
 
 .top-actions {
+  align-items: center;
   display: flex;
   gap: 8px;
+}
+
+.recorder-pill {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+
+.recorder-pill.active {
+  background: var(--green-2);
+  border-color: rgba(47, 191, 155, 0.45);
+  color: #80e7d0;
+}
+
+.recorder-pill.off {
+  background: var(--amber-2);
+  border-color: rgba(232, 182, 91, 0.4);
+  color: #ffd892;
 }
 
 .button-row {
@@ -1012,6 +1036,12 @@ td {
   }
 
   .top-actions {
+    display: flex;
+    justify-content: flex-end;
+    width: 100%;
+  }
+
+  .top-actions .icon-button {
     display: none;
   }
 

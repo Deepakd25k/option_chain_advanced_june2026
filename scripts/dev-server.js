@@ -3,6 +3,8 @@ const fs = require("fs");
 const path = require("path");
 const optionChainHandler = require("../api/upstox/option-chain");
 const expiriesHandler = require("../api/upstox/expiries");
+const sessionHistoryHandler = require("../api/session/history");
+const cronCaptureHandler = require("../api/cron/capture");
 
 const root = path.resolve(__dirname, "..");
 loadLocalEnv(path.join(root, ".env.local"));
@@ -53,6 +55,20 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === "/api/session/history") {
+    req.query = Object.fromEntries(url.searchParams.entries());
+    attachResponseHelpers(res);
+    await sessionHistoryHandler(req, res);
+    return;
+  }
+
+  if (url.pathname === "/api/cron/capture") {
+    req.query = Object.fromEntries(url.searchParams.entries());
+    attachResponseHelpers(res);
+    await cronCaptureHandler(req, res);
+    return;
+  }
+
   const requestPath = url.pathname === "/" ? "/index.html" : url.pathname;
   const filePath = path.normalize(path.join(root, requestPath));
 
@@ -73,6 +89,17 @@ const server = http.createServer(async (req, res) => {
     res.end(data);
   });
 });
+
+function attachResponseHelpers(res) {
+  res.status = function status(code) {
+    res.statusCode = code;
+    return res;
+  };
+  res.json = function json(payload) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.end(JSON.stringify(payload));
+  };
+}
 
 server.listen(port, host, () => {
   console.log(`Option Buyer Cockpit running at http://${host}:${port}`);
