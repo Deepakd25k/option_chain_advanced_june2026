@@ -310,6 +310,34 @@ input {
     rgba(23, 27, 34, 0.94);
 }
 
+.range-control {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 4px;
+}
+
+.range-control button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 900;
+  min-height: 30px;
+  min-width: 44px;
+  padding: 0 8px;
+}
+
+.range-control button.active {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
 .atm-flow-strip {
   display: grid;
   gap: 8px;

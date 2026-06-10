@@ -12,6 +12,7 @@
     history: [],
     paused: false,
     timer: null,
+    atmFlowRange: clamp(Number(localStorage.getItem("atm_flow_range") || 0), 0, 3),
     stable: {
       key: null,
       since: null,
@@ -42,7 +43,7 @@
       "confidenceScore", "decisionReasons", "moveLeftLabel", "spotPill",
       "moveMeter", "moveUsedText", "straddleText", "atmStrike", "atmIv",
       "atmStraddle", "pcrValue", "matrixTable", "strikeFinder",
-      "atmFlowSummaryChips", "atmFlowTable",
+      "atmFlowRange", "atmFlowSummaryChips", "atmFlowTable",
       "straddleChart", "ivChart", "pcrChart", "straddleDelta", "ivDelta",
       "pcrDelta", "eventGrid", "advancedEdgeGrid", "strikeFlowGrid", "signalJournal",
       "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable", "chainTable"
@@ -61,6 +62,15 @@
   function bindEvents() {
     el.refreshButton.addEventListener("click", refresh);
     el.pauseButton.addEventListener("click", togglePause);
+    el.atmFlowRange.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-range]");
+      if (!button) return;
+      state.atmFlowRange = clamp(Number(button.dataset.range), 0, 3);
+      localStorage.setItem("atm_flow_range", String(state.atmFlowRange));
+      updateAtmFlowRangeButtons();
+      const latest = lastSnapshot();
+      if (latest) renderAtmFlowWatch(latest);
+    });
     el.exportCalibration.addEventListener("click", exportCalibration);
     el.clearCalibration.addEventListener("click", clearCalibration);
     el.symbolSelect.addEventListener("change", async () => {
@@ -539,9 +549,12 @@
   }
 
   function renderAtmFlowWatch(latest) {
+    updateAtmFlowRangeButtons();
     const atmIndex = latest.rows.findIndex((row) => row.strike === latest.atmStrike);
-    const start = Math.max(0, atmIndex - 3);
-    const rows = latest.rows.slice(start, start + 7);
+    const range = state.atmFlowRange;
+    const start = Math.max(0, atmIndex - range);
+    const end = Math.min(latest.rows.length, atmIndex + range + 1);
+    const rows = latest.rows.slice(start, end);
     const windows = atmFlowWindows();
     const models = windows.map((windowItem) => {
       const older = getOlderSnapshot(windowItem.seconds);
@@ -571,6 +584,12 @@
       </tr>
     `;
     }).join("");
+  }
+
+  function updateAtmFlowRangeButtons() {
+    el.atmFlowRange.querySelectorAll("button[data-range]").forEach((button) => {
+      button.classList.toggle("active", Number(button.dataset.range) === state.atmFlowRange);
+    });
   }
 
   function atmFlowWindows() {
