@@ -2,19 +2,16 @@
 
 Formula-backed intraday option-chain dashboard for Indian index option buyers. It is built as a dependency-free static website with a Vercel serverless API route for Upstox REST data.
 
-## What It Adds Beyond A Normal OI Dashboard
+## Current Trading Surface
 
-- Decision card: market state, premium mode, best side, confidence, and reasons.
+- 5M Spot Pressure: exact completed Upstox 5-minute OHLC candles detect a defended floor, sweep reclaim, trigger, and two-close breakdown.
+- PE confirmation: same-time database snapshots compare ATM and one-lower-strike PE OI plus premium behaviour against statistical noise.
 - Auto expiry fetch from Upstox option contracts; nearest expiry is selected automatically.
 - Index selector includes NIFTY50, BANKNIFTY, FINNIFTY, and SENSEX.
-- Move-left meter: ATM straddle versus day-open move.
-- Premium response: actual option premium move versus expected delta move.
-- Strike finder: formula gates for spread, liquidity, delta, response, IV, straddle, OI context, and theta.
+- ATM Flow Matrix: Open, 5m, 10m, 15m, and 30m CE/PE OI plus premium behaviour.
 - Timeframe matrix: 1m, 3m, 5m, 15m, 30m, and since-open comparison.
-- Event read: since-open and since-current-signal context.
-- Advanced edge: trap detector, OI wall shift detector, and signal journal.
-- Strike Flow Watch: covering, writing, long buildup, and long unwinding on ATM/wall/best strikes with confidence filters.
 - Calibration Lab: browser-local session recorder, 3m/5m/10m outcome tracking, and threshold suggestions.
+- Outcome Tracker and Formula Rulebook stay collapsed until opened.
 - Mobile responsive layout.
 - Neon Postgres session recorder: restores the open baseline and exact rolling windows after refresh or redeploy.
 

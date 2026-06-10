@@ -23,7 +23,7 @@ if (missing.length) {
 }
 
 const html = fs.readFileSync(path.resolve(__dirname, "..", "index.html"), "utf8");
-for (const id of ["decisionTitle", "matrixTable", "strikeFinder", "chainTable"]) {
+for (const id of ["spotPressureCard", "pressureHeadline", "matrixTable", "atmFlowTable", "outcomeTable"]) {
   if (!html.includes(`id="${id}"`)) {
     console.error(`Missing DOM id: ${id}`);
     process.exit(1);

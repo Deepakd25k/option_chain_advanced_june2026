@@ -10,6 +10,7 @@
 
   const state = {
     history: [],
+    candles5m: [],
     paused: false,
     timer: null,
     atmFlowRange: clamp(Number(localStorage.getItem("atm_flow_range") || 0), 0, 3),
@@ -47,15 +48,11 @@
   function bindElements() {
     [
       "sourceLine", "recorderStatus", "refreshButton", "pauseButton", "symbolSelect", "expiryInput",
-      "activeWindow", "refreshInterval", "decisionTitle", "decisionCopy",
-      "stabilityPill", "marketState", "premiumMode", "bestSide",
-      "confidenceScore", "decisionReasons", "moveLeftLabel", "spotPill",
-      "moveMeter", "moveUsedText", "straddleText", "atmStrike", "atmIv",
-      "atmStraddle", "pcrValue", "preSignalLine", "matrixTable", "strikeFinder",
+      "activeWindow", "refreshInterval", "spotPressureCard", "pressureHeadline", "pressureContext",
+      "pressureState", "pressurePeState", "pressurePeOi", "pressurePePremium",
+      "pressureAtmResponse", "pressureTrigger", "pressureInvalidation", "pressureCandleNote", "matrixTable",
       "atmFlowRange", "atmFlowSummaryChips", "atmFlowTable",
-      "straddleChart", "ivChart", "pcrChart", "straddleDelta", "ivDelta",
-      "pcrDelta", "eventGrid", "advancedEdgeGrid", "strikeFlowGrid", "signalJournal",
-      "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable", "chainTable"
+      "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable"
     ].forEach((id) => {
       el[id] = document.getElementById(id);
     });
@@ -64,7 +61,8 @@
   function restoreControls() {
     el.symbolSelect.value = localStorage.getItem("instrument_key") || "NSE_INDEX|Nifty 50";
     el.expiryInput.dataset.preferred = localStorage.getItem("expiry_date") || "auto";
-    el.activeWindow.value = localStorage.getItem("active_window") || "300";
+    el.activeWindow.value = "300";
+    localStorage.setItem("active_window", "300");
     el.refreshInterval.value = localStorage.getItem("refresh_interval") || "20000";
   }
 
@@ -109,6 +107,7 @@
 
   function resetSessionState() {
     state.history = [];
+    state.candles5m = [];
     state.stable = { key: null, since: null, confirmations: 0 };
     state.signalStartSnapshot = null;
     state.journal = [];
@@ -154,6 +153,7 @@
         throw new Error(payload.error || "Unable to fetch option-chain data");
       }
       const snapshot = normalizeSnapshot(payload);
+      state.candles5m = normalizeFiveMinuteCandles(payload.candles5m, snapshot.time);
       if (payload.expiry && payload.expiry !== el.expiryInput.value) {
         ensureExpiryOption(payload.expiry);
         el.expiryInput.value = payload.expiry;
@@ -382,6 +382,23 @@
     };
   }
 
+  function normalizeFiveMinuteCandles(candles, referenceTime) {
+    if (!Array.isArray(candles)) return [];
+    return candles
+      .map((candle) => ({
+        start: new Date(candle[0]).getTime(),
+        end: new Date(candle[0]).getTime() + 5 * 60 * 1000,
+        open: number(candle[1]),
+        high: number(candle[2]),
+        low: number(candle[3]),
+        close: number(candle[4]),
+        source: "Upstox 5m OHLC"
+      }))
+      .filter((candle) => Number.isFinite(candle.start) && candle.end <= referenceTime && candle.close > 0)
+      .sort((a, b) => a.start - b.start)
+      .slice(-24);
+  }
+
   function findWalls(rows, spot) {
     const callWall = rows
       .filter((row) => row.strike >= spot)
@@ -401,19 +418,11 @@
     updateSignalJournal(decision, latest, active);
     updateSignalOutcomes(latest);
     saveCalibrationState();
-    renderDecision(decision, latest, active);
-    renderMoveMeter(latest);
+    renderSpotPressure(latest);
     renderAtmFlowWatch(latest);
     renderMatrix();
-    renderStrikeFinder(latest, active);
-    renderCharts();
-    renderEvents(latest, active, decision);
-    renderAdvancedEdge(latest, active, decision);
-    renderStrikeFlowWatch(latest, active, decision);
-    renderSignalJournal();
     renderCalibrationLab();
     renderOutcomeTable();
-    renderChain(latest, active);
   }
 
   function buildDecision(latest, active) {
@@ -585,6 +594,237 @@
     return items;
   }
 
+  function renderSpotPressure(latest) {
+    const read = buildFiveMinutePressure(latest);
+    el.spotPressureCard.dataset.tone = read.tone;
+    el.pressureHeadline.textContent = read.headline;
+    el.pressureContext.textContent = read.context;
+    el.pressureState.className = `pressure-state ${read.tone}`;
+    el.pressureState.textContent = read.state;
+    el.pressurePeState.textContent = read.peState;
+    el.pressurePeOi.textContent = read.peOi === null ? "Building" : compact(read.peOi);
+    el.pressurePeOi.className = read.peOi > 0 ? "positive" : read.peOi < 0 ? "negative" : "";
+    el.pressurePePremium.textContent = read.pePremium === null ? "Building" : signed(read.pePremium);
+    el.pressurePePremium.className = read.pePremium < 0 ? "positive" : read.pePremium > 0 ? "negative" : "";
+    el.pressureAtmResponse.textContent = read.atmResponse;
+    el.pressureTrigger.textContent = read.trigger ? price(read.trigger) : "Building";
+    el.pressureInvalidation.textContent = read.invalidation ? price(read.invalidation) : "Building";
+    el.pressureCandleNote.textContent = read.note;
+  }
+
+  function buildFiveMinutePressure(latest) {
+    const exactCandles = state.candles5m;
+    const candles = exactCandles.length ? exactCandles : buildSnapshotFiveMinuteCandles(latest.time);
+    const source = exactCandles.length ? "Upstox completed 5m OHLC" : "DB snapshot 5m fallback";
+    if (candles.length < 3) {
+      return emptyPressureRead(`Need ${3 - candles.length} more completed 5m candle${candles.length === 2 ? "" : "s"}`, source);
+    }
+
+    const recent = candles.slice(-6);
+    const zone = Math.max(5, latest.atmStraddle * 0.03);
+    const floorRead = findDefendedFloor(recent, zone);
+    if (!floorRead) {
+      return emptyPressureRead("No price zone has two completed 5m tests yet", source);
+    }
+
+    const last = recent[recent.length - 1];
+    const heldCandles = recent.filter((candle) => candle.start >= floorRead.firstTouch.start);
+    const heldMinutes = Math.max(5, Math.round((last.end - floorRead.firstTouch.start) / 60000));
+    const invalidation = floorRead.floor - zone;
+    const closesBelow = heldCandles.filter((candle) => candle.close < invalidation);
+    const lastTwo = heldCandles.slice(-2);
+    const breakdownConfirmed = lastTwo.length === 2 && lastTwo.every((candle) => candle.close < invalidation);
+    const breakdownWatch = !breakdownConfirmed && last.close < invalidation;
+    const swept = last.low < invalidation && last.close >= floorRead.floor;
+    const priorForTrigger = heldCandles.length > 1 ? heldCandles.slice(-4, -1) : heldCandles;
+    const trigger = priorForTrigger.length ? Math.max(...priorForTrigger.map((candle) => candle.high)) : 0;
+
+    const baselineSnapshot = findSnapshotNear(floorRead.firstTouch.start);
+    const completedSnapshot = findSnapshotNear(last.end);
+    const pe = buildPePressure(baselineSnapshot, completedSnapshot);
+    const floorHeld = heldMinutes >= 10 && closesBelow.length === 0;
+    const upsideTriggered = floorHeld && pe.state === "Strong" && trigger && last.close > trigger;
+
+    let stateLabel = "PRICE HOLDING";
+    let tone = "holding";
+    let headline = `${price(floorRead.floor)} ke neeche ${heldMinutes}m se 5m close nahi`;
+    let note = "Forming 5m candle is not used for confirmation";
+
+    if (breakdownConfirmed && pe.bearishConfirmation) {
+      stateLabel = "BREAKDOWN CONFIRMED";
+      tone = "negative";
+      headline = `${price(invalidation)} ke neeche two completed 5m closes`;
+      note = "Price close and PE premium pressure both confirm failure";
+    } else if (breakdownWatch) {
+      stateLabel = "BREAKDOWN WATCH";
+      tone = "warn";
+      headline = `${price(invalidation)} ke neeche first 5m close; second close pending`;
+      note = "Single close cannot confirm breakdown";
+    } else if (swept) {
+      stateLabel = pe.state === "Strong" ? "SWEEP RECLAIMED" : "SWEEP · OI WAIT";
+      tone = pe.state === "Strong" ? "positive" : "warn";
+      headline = `${price(last.low)} sweep hua, ${price(floorRead.floor)} ke upar 5m close`;
+      note = "Wick below the zone was reclaimed on a completed candle";
+    } else if (upsideTriggered) {
+      stateLabel = "UPSIDE TRIGGERED";
+      tone = "positive";
+      headline = `${price(floorRead.floor)} floor held and ${price(trigger)} trigger closed above`;
+      note = "Floor, PE writing and price trigger are aligned";
+    } else if (floorHeld && pe.state === "Strong") {
+      stateLabel = "UPSIDE PRESSURE";
+      tone = "positive";
+    } else if (!floorHeld) {
+      stateLabel = "FLOOR BUILDING";
+      tone = "building";
+    }
+
+    return {
+      state: stateLabel,
+      tone,
+      headline,
+      context: `${floorRead.tests} defended tests · ${source} · ${pe.strikeText}`,
+      peState: pe.state,
+      peOi: pe.oiChange,
+      pePremium: pe.premiumChange,
+      atmResponse: pe.response,
+      trigger,
+      invalidation,
+      note
+    };
+  }
+
+  function emptyPressureRead(headline, source) {
+    return {
+      state: "BUILDING",
+      tone: "building",
+      headline,
+      context: `${source} · completed candles only`,
+      peState: "History building",
+      peOi: null,
+      pePremium: null,
+      atmResponse: "Waiting",
+      trigger: 0,
+      invalidation: 0,
+      note: "Forming 5m candle is not used for confirmation"
+    };
+  }
+
+  function findDefendedFloor(candles, zone) {
+    const candidates = candles.map((candle) => {
+      const near = candles.filter((item) => Math.abs(item.low - candle.low) <= zone);
+      if (near.length < 2) return null;
+      const sweeps = candles.filter((item) => item.low < candle.low - zone && item.close >= candle.low);
+      const touches = [...new Map([...near, ...sweeps].map((item) => [item.start, item])).values()]
+        .sort((a, b) => a.start - b.start);
+      return {
+        floor: median(near.map((item) => item.low)),
+        tests: touches.length,
+        nearTests: near.length,
+        firstTouch: touches[0],
+        lastTouch: touches[touches.length - 1]
+      };
+    }).filter(Boolean);
+
+    return candidates.sort((a, b) => (
+      b.nearTests - a.nearTests
+      || b.tests - a.tests
+      || b.lastTouch.start - a.lastTouch.start
+    ))[0] || null;
+  }
+
+  function buildPePressure(baseline, current) {
+    if (!baseline || !current || baseline === current) {
+      return {
+        state: "History building",
+        response: "Waiting",
+        oiChange: null,
+        premiumChange: null,
+        bearishConfirmation: false,
+        strikeText: "PE history building"
+      };
+    }
+
+    const atmIndex = baseline.rows.findIndex((row) => row.strike === baseline.atmStrike);
+    const strikes = [baseline.atmStrike];
+    if (atmIndex > 0) strikes.push(baseline.rows[atmIndex - 1].strike);
+    const paired = strikes.map((strike) => ({
+      baseline: baseline.rows.find((row) => row.strike === strike),
+      current: current.rows.find((row) => row.strike === strike)
+    })).filter((pair) => pair.baseline && pair.current);
+
+    if (!paired.length) {
+      return {
+        state: "Strike history missing",
+        response: "Waiting",
+        oiChange: null,
+        premiumChange: null,
+        bearishConfirmation: false,
+        strikeText: "same-strike PE history missing"
+      };
+    }
+
+    const oiChange = sum(paired, (pair) => pair.current.pe.oi - pair.baseline.pe.oi);
+    const premiumChange = sum(paired, (pair) => pair.current.pe.ltp - pair.baseline.pe.ltp);
+    const baselineIndex = Math.max(0, atmIndex - 3);
+    const universe = baseline.rows.slice(baselineIndex, Math.min(baseline.rows.length, atmIndex + 4))
+      .map((row) => {
+        const currentRow = current.rows.find((item) => item.strike === row.strike);
+        return currentRow ? {
+          oi: currentRow.pe.oi - row.pe.oi,
+          premium: currentRow.pe.ltp - row.pe.ltp
+        } : null;
+      }).filter(Boolean);
+    const oiAbs = universe.map((item) => Math.abs(item.oi));
+    const premiumAbs = universe.map((item) => Math.abs(item.premium));
+    const oiCenter = median(oiAbs);
+    const premiumCenter = median(premiumAbs);
+    const oiThreshold = Math.max(50000, (oiCenter + 1.5 * median(oiAbs.map((value) => Math.abs(value - oiCenter)))) * Math.sqrt(paired.length));
+    const premiumThreshold = Math.max(1, (premiumCenter + median(premiumAbs.map((value) => Math.abs(value - premiumCenter)))) * Math.sqrt(paired.length));
+    const strongWriting = oiChange >= oiThreshold && premiumChange <= -premiumThreshold;
+    const developingWriting = oiChange > 0 && premiumChange < 0;
+    const bearishConfirmation = premiumChange >= premiumThreshold && (oiChange > 0 || oiChange <= -oiThreshold);
+
+    return {
+      state: strongWriting ? "Strong" : developingWriting ? "Developing" : bearishConfirmation ? "Under risk" : "Mixed",
+      response: strongWriting ? "Confirming" : developingWriting ? "Early" : bearishConfirmation ? "Not confirming" : "Neutral",
+      oiChange,
+      premiumChange,
+      bearishConfirmation,
+      strikeText: `${paired.map((pair) => price(pair.baseline.strike, 0)).join(" + ")} PE`
+    };
+  }
+
+  function findSnapshotNear(time) {
+    const nearest = state.history.reduce((best, snapshot) => {
+      const distance = Math.abs(snapshot.time - time);
+      return !best || distance < best.distance ? { snapshot, distance } : best;
+    }, null);
+    return nearest && nearest.distance <= 75 * 1000 ? nearest.snapshot : null;
+  }
+
+  function buildSnapshotFiveMinuteCandles(referenceTime) {
+    const currentBucket = Math.floor(referenceTime / 300000) * 300000;
+    const groups = new Map();
+    state.history.forEach((snapshot) => {
+      const start = Math.floor(snapshot.time / 300000) * 300000;
+      if (start >= currentBucket) return;
+      if (!groups.has(start)) groups.set(start, []);
+      groups.get(start).push(snapshot);
+    });
+    return [...groups.entries()].map(([start, snapshots]) => {
+      snapshots.sort((a, b) => a.time - b.time);
+      return {
+        start,
+        end: start + 300000,
+        open: snapshots[0].spot,
+        high: Math.max(...snapshots.map((snapshot) => snapshot.spot)),
+        low: Math.min(...snapshots.map((snapshot) => snapshot.spot)),
+        close: snapshots[snapshots.length - 1].spot,
+        source: "DB snapshot 5m fallback"
+      };
+    }).filter((candle) => candle.close > 0).sort((a, b) => a.start - b.start).slice(-24);
+  }
+
   function updateStability(key) {
     const now = Date.now();
     if (state.stable.key === key) {
@@ -648,8 +888,6 @@
         summary: summarizeAtmFlow(flowRows)
       };
     });
-    renderPreSignalLine(models);
-
     el.atmFlowSummaryChips.innerHTML = models.map((model) => `
       <div class="atm-flow-chip ${model.summary.tone}" title="${escapeHtml(model.summary.reason)}">
         <span>${model.label}</span>
@@ -843,7 +1081,7 @@
 
     if (score >= 4) {
       return {
-        title: "ATM Flow: Bullish support build",
+        title: "ATM Flow: Bullish PE pressure",
         tone: "positive",
         bias: "Bullish",
         score,
@@ -857,7 +1095,7 @@
 
     if (score <= -4) {
       return {
-        title: "ATM Flow: Resistance / bearish pressure",
+        title: "ATM Flow: Bearish CE pressure",
         tone: "negative",
         bias: "Bearish",
         score,
@@ -1932,6 +2170,13 @@
   function average(values) {
     const filtered = values.filter((value) => Number.isFinite(value) && value > 0);
     return filtered.length ? filtered.reduce((total, value) => total + value, 0) / filtered.length : 0;
+  }
+
+  function median(values) {
+    const filtered = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+    if (!filtered.length) return 0;
+    const middle = Math.floor(filtered.length / 2);
+    return filtered.length % 2 ? filtered[middle] : (filtered[middle - 1] + filtered[middle]) / 2;
   }
 
   function price(value, decimals = 2) {

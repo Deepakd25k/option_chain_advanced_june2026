@@ -26,9 +26,7 @@
 
 body {
   margin: 0;
-  background:
-    radial-gradient(circle at top left, rgba(47, 191, 155, 0.10), transparent 28rem),
-    linear-gradient(135deg, #101318 0%, #14161c 50%, #101318 100%);
+  background: var(--bg);
   color: var(--text);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   min-height: 100vh;
@@ -174,7 +172,7 @@ label,
   border-radius: var(--radius);
   display: grid;
   gap: 12px;
-  grid-template-columns: 1.2fr repeat(3, 1fr);
+  grid-template-columns: 1.2fr repeat(2, 1fr);
   padding: 12px;
   position: sticky;
   top: 0;
@@ -225,6 +223,165 @@ input {
 
 .span-2 {
   grid-column: span 2;
+}
+
+.pressure-card {
+  border-top: 3px solid var(--soft);
+  padding: 20px;
+}
+
+.pressure-card[data-tone="positive"] {
+  border-top-color: var(--green);
+}
+
+.pressure-card[data-tone="warn"] {
+  border-top-color: var(--amber);
+}
+
+.pressure-card[data-tone="negative"] {
+  border-top-color: var(--rose);
+}
+
+.pressure-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.pressure-heading h2 {
+  font-size: 1.35rem;
+  line-height: 1.35;
+}
+
+.pressure-heading p:last-child {
+  color: var(--muted);
+  line-height: 1.5;
+  margin-top: 5px;
+}
+
+.pressure-state {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-weight: 900;
+  padding: 8px 11px;
+}
+
+.pressure-state.positive {
+  background: var(--green-2);
+  border-color: rgba(47, 191, 155, 0.45);
+  color: #80e7d0;
+}
+
+.pressure-state.warn {
+  background: var(--amber-2);
+  border-color: rgba(232, 182, 91, 0.45);
+  color: #ffd892;
+}
+
+.pressure-state.negative {
+  background: var(--rose-2);
+  border-color: rgba(240, 100, 134, 0.48);
+  color: #ffb1c2;
+}
+
+.pressure-metrics {
+  border-bottom: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 18px;
+}
+
+.pressure-metrics div {
+  border-right: 1px solid var(--line);
+  min-width: 0;
+  padding: 14px 16px;
+}
+
+.pressure-metrics div:first-child {
+  padding-left: 0;
+}
+
+.pressure-metrics div:last-child {
+  border-right: 0;
+}
+
+.pressure-metrics span {
+  color: var(--muted);
+  display: block;
+  font-size: 0.76rem;
+  margin-bottom: 6px;
+}
+
+.pressure-metrics strong {
+  display: block;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.pressure-levels {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  gap: 10px 24px;
+  padding-top: 13px;
+}
+
+.pressure-levels strong {
+  color: var(--text);
+  margin-left: 5px;
+}
+
+.pressure-levels > span:last-child {
+  margin-left: auto;
+}
+
+.collapsible-panel {
+  padding: 0;
+}
+
+.collapsible-panel summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  list-style: none;
+  padding: 16px;
+}
+
+.collapsible-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible-panel summary > span {
+  color: var(--cyan);
+  font-size: 0;
+  font-weight: 800;
+}
+
+.collapsible-panel summary > span::after {
+  content: "Show";
+  font-size: 0.8rem;
+}
+
+.collapsible-panel[open] summary > span::after {
+  content: "Hide";
+}
+
+.collapsible-panel[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.collapsible-panel > :not(summary) {
+  margin: 16px;
 }
 
 .panel-heading {
@@ -1010,6 +1167,37 @@ td {
 
   .panel-heading {
     display: grid;
+  }
+
+  .pressure-heading {
+    display: grid;
+  }
+
+  .pressure-state {
+    justify-self: start;
+  }
+
+  .pressure-metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .pressure-metrics div,
+  .pressure-metrics div:first-child {
+    border-bottom: 1px solid var(--line);
+    padding: 12px 10px;
+  }
+
+  .pressure-metrics div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .pressure-metrics div:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+
+  .pressure-levels > span:last-child {
+    margin-left: 0;
+    width: 100%;
   }
 
   .decision-metrics,

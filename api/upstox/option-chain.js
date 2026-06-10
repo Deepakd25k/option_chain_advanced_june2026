@@ -1,5 +1,6 @@
 const UPSTOX_OPTION_CHAIN_URL = "https://api.upstox.com/v2/option/chain";
 const UPSTOX_OPTION_CONTRACT_URL = "https://api.upstox.com/v2/option/contract";
+const UPSTOX_INTRADAY_CANDLE_URL = "https://api.upstox.com/v3/historical-candle/intraday";
 const { saveMarketSnapshot } = require("../../lib/session-store");
 
 module.exports = async function handler(req, res) {
@@ -40,12 +41,10 @@ async function fetchLivePayload(instrumentKey, requestedExpiry, token) {
   url.searchParams.set("instrument_key", instrumentKey);
   url.searchParams.set("expiry_date", expiryDate);
 
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`
-    }
-  });
+  const [response, candles5m] = await Promise.all([
+    fetch(url, { headers: upstoxHeaders(token) }),
+    fetchIntradayCandles(instrumentKey, token).catch(() => [])
+  ]);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(payload.message || payload.error || "Upstox option-chain request failed");
@@ -58,7 +57,25 @@ async function fetchLivePayload(instrumentKey, requestedExpiry, token) {
     expiry: expiryDate,
     availableExpiries: [],
     underlying: inferUnderlying(payload.data || []),
+    candles5m,
     data: payload.data || []
+  };
+}
+
+async function fetchIntradayCandles(instrumentKey, token) {
+  const url = `${UPSTOX_INTRADAY_CANDLE_URL}/${encodeURIComponent(instrumentKey)}/minutes/5`;
+  const response = await fetch(url, { headers: upstoxHeaders(token) });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.message || payload.error || "Upstox intraday candle request failed");
+  }
+  return payload.data && Array.isArray(payload.data.candles) ? payload.data.candles : [];
+}
+
+function upstoxHeaders(token) {
+  return {
+    Accept: "application/json",
+    Authorization: `Bearer ${token}`
   };
 }
 
