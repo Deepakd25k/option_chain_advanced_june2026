@@ -542,8 +542,9 @@
       { label: "ATM Straddle", getter: (m) => signed(m.straddleChange) },
       { label: "ATM IV", getter: (m) => signed(m.ivChange) },
       { label: "PCR", getter: (m) => signed(m.pcrChange) },
-      { label: "Call OI", getter: (m) => compact(m.callOiChange) },
-      { label: "Put OI", getter: (m) => compact(m.putOiChange) },
+      { label: "Call Chg OI", getter: (m) => compact(m.callOiChange) },
+      { label: "Put Chg OI", getter: (m) => compact(m.putOiChange) },
+      { label: "Net Chg OI", getter: (m) => compact(m.putOiChange - m.callOiChange) },
       { label: "CE Response", getter: (m) => ratio(premiumResponse("CE", pickCandidateStrike(lastSnapshot(), "CE"), m.seconds)) },
       { label: "PE Response", getter: (m) => ratio(premiumResponse("PE", pickCandidateStrike(lastSnapshot(), "PE"), m.seconds)) }
     ];
