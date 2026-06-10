@@ -30,7 +30,7 @@
     bindElements();
     restoreControls();
     bindEvents();
-    refresh();
+    loadExpiries().then(refresh);
     scheduleNext();
   }
 
@@ -51,12 +51,8 @@
   }
 
   function restoreControls() {
-    const today = new Date();
-    const isoDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000)
-      .toISOString()
-      .slice(0, 10);
-    el.expiryInput.value = localStorage.getItem("expiry_date") || isoDate;
     el.symbolSelect.value = localStorage.getItem("instrument_key") || "NSE_INDEX|Nifty 50";
+    el.expiryInput.dataset.preferred = localStorage.getItem("expiry_date") || "auto";
     el.activeWindow.value = localStorage.getItem("active_window") || "300";
     el.refreshInterval.value = localStorage.getItem("refresh_interval") || "20000";
   }
@@ -66,24 +62,36 @@
     el.pauseButton.addEventListener("click", togglePause);
     el.exportCalibration.addEventListener("click", exportCalibration);
     el.clearCalibration.addEventListener("click", clearCalibration);
+    el.symbolSelect.addEventListener("change", async () => {
+      localStorage.setItem("instrument_key", el.symbolSelect.value);
+      resetSessionState();
+      await loadExpiries();
+      await refresh();
+      scheduleNext();
+    });
+    el.expiryInput.addEventListener("change", () => {
+      localStorage.setItem("expiry_date", el.expiryInput.value);
+      resetSessionState();
+      refresh();
+      scheduleNext();
+    });
     [el.symbolSelect, el.expiryInput, el.activeWindow, el.refreshInterval].forEach((control) => {
       control.addEventListener("change", () => {
-        localStorage.setItem("instrument_key", el.symbolSelect.value);
-        localStorage.setItem("expiry_date", el.expiryInput.value);
         localStorage.setItem("active_window", el.activeWindow.value);
         localStorage.setItem("refresh_interval", el.refreshInterval.value);
-        if (control === el.symbolSelect || control === el.expiryInput) {
-          state.history = [];
-          state.stable = { key: null, since: null, confirmations: 0 };
-          state.signalStartSnapshot = null;
-          state.journal = [];
-          state.calibration = freshCalibrationState();
-          saveCalibrationState();
-        }
-        refresh();
+        if (control === el.activeWindow || control === el.refreshInterval) refresh();
         scheduleNext();
       });
     });
+  }
+
+  function resetSessionState() {
+    state.history = [];
+    state.stable = { key: null, since: null, confirmations: 0 };
+    state.signalStartSnapshot = null;
+    state.journal = [];
+    state.calibration = freshCalibrationState();
+    saveCalibrationState();
   }
 
   function togglePause() {
@@ -111,7 +119,7 @@
       setSource("Refreshing option chain...");
       const params = new URLSearchParams({
         instrument_key: el.symbolSelect.value,
-        expiry_date: el.expiryInput.value
+        expiry_date: el.expiryInput.value || "auto"
       });
       const response = await fetch(`/api/upstox/option-chain?${params.toString()}`, {
         cache: "no-store"
@@ -121,6 +129,11 @@
         throw new Error(payload.error || "Unable to fetch option-chain data");
       }
       const snapshot = normalizeSnapshot(payload);
+      if (payload.expiry && payload.expiry !== el.expiryInput.value) {
+        ensureExpiryOption(payload.expiry);
+        el.expiryInput.value = payload.expiry;
+        localStorage.setItem("expiry_date", payload.expiry);
+      }
       addSnapshot(snapshot);
       render();
       setSource(`${payload.source === "live" ? "Live Upstox REST" : "Demo mode"} · ${formatTime(snapshot.time)} · ${state.history.length} snapshots`);
@@ -131,6 +144,49 @@
         addSnapshot(snapshot);
         render();
       }
+    }
+  }
+
+  async function loadExpiries() {
+    try {
+      el.expiryInput.disabled = true;
+      el.expiryInput.innerHTML = '<option value="auto">Loading...</option>';
+      const params = new URLSearchParams({ instrument_key: el.symbolSelect.value });
+      const response = await fetch(`/api/upstox/expiries?${params.toString()}`, { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to fetch expiries");
+      }
+      const expiries = Array.isArray(payload.expiries) ? payload.expiries : [];
+      if (!expiries.length) {
+        throw new Error("No expiries returned");
+      }
+      const preferred = el.expiryInput.dataset.preferred || localStorage.getItem("expiry_date") || "auto";
+      const selected = expiries.includes(preferred) ? preferred : expiries[0];
+      el.expiryInput.innerHTML = expiries.map((expiry, index) => (
+        `<option value="${expiry}">${expiry}${index === 0 ? " · nearest" : ""}</option>`
+      )).join("");
+      el.expiryInput.value = selected;
+      localStorage.setItem("expiry_date", selected);
+      setSource(`${payload.source === "live" ? "Live" : "Demo"} expiries loaded · ${selected}`);
+    } catch (error) {
+      el.expiryInput.innerHTML = '<option value="auto">Auto</option>';
+      el.expiryInput.value = "auto";
+      localStorage.setItem("expiry_date", "auto");
+      setSource(`Expiry auto mode: ${error.message}`);
+    } finally {
+      el.expiryInput.disabled = false;
+      el.expiryInput.dataset.preferred = el.expiryInput.value;
+    }
+  }
+
+  function ensureExpiryOption(expiry) {
+    const exists = Array.from(el.expiryInput.options).some((option) => option.value === expiry);
+    if (!exists) {
+      const option = document.createElement("option");
+      option.value = expiry;
+      option.textContent = `${expiry} · resolved`;
+      el.expiryInput.appendChild(option);
     }
   }
 
@@ -1425,6 +1481,7 @@
   }
 
   function labelForInstrument(instrumentKey) {
+    if (instrumentKey.includes("SENSEX")) return "SENSEX";
     if (instrumentKey.includes("Bank")) return "BANKNIFTY";
     if (instrumentKey.includes("Fin")) return "FINNIFTY";
     return "NIFTY";

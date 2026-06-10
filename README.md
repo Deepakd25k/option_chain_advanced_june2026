@@ -5,6 +5,8 @@ Formula-backed intraday option-chain dashboard for Indian index option buyers. I
 ## What It Adds Beyond A Normal OI Dashboard
 
 - Decision card: market state, premium mode, best side, confidence, and reasons.
+- Auto expiry fetch from Upstox option contracts; nearest expiry is selected automatically.
+- Index selector includes NIFTY50, BANKNIFTY, FINNIFTY, and SENSEX.
 - Move-left meter: ATM straddle versus day-open move.
 - Premium response: actual option premium move versus expected delta move.
 - Strike finder: formula gates for spread, liquidity, delta, response, IV, straddle, OI context, and theta.

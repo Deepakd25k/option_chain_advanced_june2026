@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const optionChainHandler = require("../api/upstox/option-chain");
+const expiriesHandler = require("../api/upstox/expiries");
 
 const root = path.resolve(__dirname, "..");
 loadLocalEnv(path.join(root, ".env.local"));
@@ -35,6 +36,20 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(payload));
     };
     await optionChainHandler(req, res);
+    return;
+  }
+
+  if (url.pathname === "/api/upstox/expiries") {
+    req.query = Object.fromEntries(url.searchParams.entries());
+    res.status = function status(code) {
+      res.statusCode = code;
+      return res;
+    };
+    res.json = function json(payload) {
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(JSON.stringify(payload));
+    };
+    await expiriesHandler(req, res);
     return;
   }
 

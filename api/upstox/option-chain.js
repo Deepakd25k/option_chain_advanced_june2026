@@ -1,19 +1,24 @@
 const UPSTOX_OPTION_CHAIN_URL = "https://api.upstox.com/v2/option/chain";
+const UPSTOX_OPTION_CONTRACT_URL = "https://api.upstox.com/v2/option/contract";
 
 module.exports = async function handler(req, res) {
   setJsonHeaders(res);
 
   const query = req.query || {};
   const instrumentKey = String(query.instrument_key || "NSE_INDEX|Nifty 50");
-  const expiryDate = String(query.expiry_date || new Date().toISOString().slice(0, 10));
+  const requestedExpiry = String(query.expiry_date || "auto");
   const forceDemo = String(query.demo || "") === "1";
   const token = process.env.UPSTOX_ACCESS_TOKEN || process.env.UPSTOX_BEARER_TOKEN || "";
 
   if (forceDemo || !token) {
+    const expiryDate = requestedExpiry === "auto" ? demoExpiries()[0] : requestedExpiry;
     return sendJson(res, 200, makeDemoPayload(instrumentKey, expiryDate));
   }
 
   try {
+    const expiryDate = requestedExpiry === "auto"
+      ? await resolveNearestExpiry(instrumentKey, token)
+      : requestedExpiry;
     const url = new URL(UPSTOX_OPTION_CHAIN_URL);
     url.searchParams.set("instrument_key", instrumentKey);
     url.searchParams.set("expiry_date", expiryDate);
@@ -39,6 +44,7 @@ module.exports = async function handler(req, res) {
       generatedAt: new Date().toISOString(),
       instrumentKey,
       expiry: expiryDate,
+      availableExpiries: [],
       underlying: inferUnderlying(payload.data || []),
       data: payload.data || []
     });
@@ -49,6 +55,33 @@ module.exports = async function handler(req, res) {
     });
   }
 };
+
+async function resolveNearestExpiry(instrumentKey, token) {
+  const url = new URL(UPSTOX_OPTION_CONTRACT_URL);
+  url.searchParams.set("instrument_key", instrumentKey);
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`
+    }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.message || payload.error || "Unable to fetch option expiries");
+  }
+  const expiries = extractExpiries(payload.data || []);
+  if (!expiries.length) {
+    throw new Error("No option expiries returned by Upstox");
+  }
+  return expiries[0];
+}
+
+function extractExpiries(contracts) {
+  const today = new Date().toISOString().slice(0, 10);
+  return [...new Set(contracts.map((item) => item.expiry).filter(Boolean))]
+    .filter((expiry) => expiry >= today)
+    .sort();
+}
 
 function setJsonHeaders(res) {
   if (typeof res.setHeader === "function") {
@@ -78,11 +111,17 @@ function inferUnderlying(rows) {
 
 function makeDemoPayload(instrumentKey, expiryDate) {
   const now = Date.now();
-  const base = instrumentKey.includes("Bank") ? 51200 : instrumentKey.includes("Fin") ? 22400 : 23240;
+  const base = instrumentKey.includes("SENSEX")
+    ? 76500
+    : instrumentKey.includes("Bank")
+      ? 51200
+      : instrumentKey.includes("Fin")
+        ? 22400
+        : 23240;
   const wave = Math.sin(now / 85000) * 45 + Math.cos(now / 37000) * 18;
   const spot = base + wave;
   const dayOpen = base - 85;
-  const step = instrumentKey.includes("Bank") ? 100 : 50;
+  const step = instrumentKey.includes("Bank") || instrumentKey.includes("SENSEX") ? 100 : 50;
   const atm = Math.round(spot / step) * step;
   const rows = [];
 
@@ -116,12 +155,25 @@ function makeDemoPayload(instrumentKey, expiryDate) {
     generatedAt: new Date().toISOString(),
     instrumentKey,
     expiry: expiryDate,
+    availableExpiries: demoExpiries(),
     underlying: {
       spot: round(spot),
       dayOpen: round(dayOpen)
     },
     data: rows
   };
+}
+
+function demoExpiries() {
+  const expiries = [];
+  const date = new Date();
+  while (expiries.length < 6) {
+    if (date.getDay() === 2) {
+      expiries.push(date.toISOString().slice(0, 10));
+    }
+    date.setDate(date.getDate() + 1);
+  }
+  return expiries;
 }
 
 function makeOptionSide(side, strike, ltp, delta, iv, oi, offset, now) {
