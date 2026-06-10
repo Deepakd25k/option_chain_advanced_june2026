@@ -304,6 +304,105 @@ input {
   font-size: 1.05rem;
 }
 
+.atm-flow-panel {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.atm-flow-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.atm-flow-head h2.positive {
+  color: #7ee0cb;
+}
+
+.atm-flow-head h2.negative {
+  color: #ff9bb2;
+}
+
+.atm-flow-head h2.muted {
+  color: var(--muted);
+}
+
+.segmented {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+}
+
+.segmented button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 800;
+  min-height: 28px;
+  padding: 0 8px;
+}
+
+.segmented button.active {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.atm-flow-totals {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.atm-flow-totals div {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+}
+
+.atm-flow-totals span,
+.atm-flow-totals em {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-style: normal;
+}
+
+.atm-flow-totals strong {
+  font-size: 0.95rem;
+}
+
+.mini-table-wrap {
+  overflow-x: auto;
+}
+
+.mini-flow-table {
+  min-width: 720px;
+}
+
+.mini-flow-table th,
+.mini-flow-table td {
+  font-size: 0.78rem;
+  padding: 8px 7px;
+  text-align: center;
+}
+
+.mini-flow-table .strike-cell {
+  min-width: 92px;
+}
+
 .rule-stack {
   display: grid;
   gap: 8px;
@@ -488,6 +587,11 @@ td {
 }
 
 .tag.neutral {
+  background: var(--surface-3);
+  color: var(--muted);
+}
+
+.tag.muted {
   background: var(--surface-3);
   color: var(--muted);
 }

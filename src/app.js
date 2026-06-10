@@ -12,6 +12,7 @@
     history: [],
     paused: false,
     timer: null,
+    atmFlowWindow: localStorage.getItem("atm_flow_window") || "open",
     stable: {
       key: null,
       since: null,
@@ -42,6 +43,7 @@
       "confidenceScore", "decisionReasons", "moveLeftLabel", "spotPill",
       "moveMeter", "moveUsedText", "straddleText", "atmStrike", "atmIv",
       "atmStraddle", "pcrValue", "matrixTable", "strikeFinder",
+      "atmFlowWindow", "atmFlowSummary", "atmFlowTotals", "atmFlowTable",
       "straddleChart", "ivChart", "pcrChart", "straddleDelta", "ivDelta",
       "pcrDelta", "eventGrid", "advancedEdgeGrid", "strikeFlowGrid", "signalJournal",
       "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable", "chainTable"
@@ -60,6 +62,15 @@
   function bindEvents() {
     el.refreshButton.addEventListener("click", refresh);
     el.pauseButton.addEventListener("click", togglePause);
+    el.atmFlowWindow.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-window]");
+      if (!button) return;
+      state.atmFlowWindow = button.dataset.window;
+      localStorage.setItem("atm_flow_window", state.atmFlowWindow);
+      updateAtmFlowButtons();
+      const latest = lastSnapshot();
+      if (latest) renderAtmFlowWatch(latest);
+    });
     el.exportCalibration.addEventListener("click", exportCalibration);
     el.clearCalibration.addEventListener("click", clearCalibration);
     el.symbolSelect.addEventListener("change", async () => {
@@ -310,6 +321,7 @@
     saveCalibrationState();
     renderDecision(decision, latest, active);
     renderMoveMeter(latest);
+    renderAtmFlowWatch(latest);
     renderMatrix();
     renderStrikeFinder(latest, active);
     renderCharts();
@@ -534,6 +546,180 @@
     el.atmIv.textContent = `${price(latest.atmIv)}%`;
     el.atmStraddle.textContent = price(latest.atmStraddle);
     el.pcrValue.textContent = ratio(latest.pcr);
+  }
+
+  function renderAtmFlowWatch(latest) {
+    updateAtmFlowButtons();
+    const seconds = state.atmFlowWindow === "open" ? null : Number(state.atmFlowWindow);
+    const older = getOlderSnapshot(seconds);
+    const atmIndex = latest.rows.findIndex((row) => row.strike === latest.atmStrike);
+    const start = Math.max(0, atmIndex - 3);
+    const rows = latest.rows.slice(start, start + 7);
+    const flowRows = rows.map((row) => buildAtmFlowRow(latest, older, row));
+    const summary = summarizeAtmFlow(flowRows);
+
+    el.atmFlowSummary.textContent = summary.title;
+    el.atmFlowSummary.className = summary.tone;
+    el.atmFlowTotals.innerHTML = `
+      <div><span>CE Total</span><strong>${compact(summary.ceOiTotal)}</strong><em>${signed(summary.cePremTotal)} prem</em></div>
+      <div><span>PE Total</span><strong>${compact(summary.peOiTotal)}</strong><em>${signed(summary.pePremTotal)} prem</em></div>
+      <div><span>Overall</span><strong>${escapeHtml(summary.bias)}</strong><em>${escapeHtml(summary.reason)}</em></div>
+    `;
+
+    const tbody = el.atmFlowTable.querySelector("tbody");
+    tbody.innerHTML = flowRows.map((item) => `
+      <tr class="${item.isAtm ? "atm-row" : ""}">
+        <td>${compact(item.ce.oiChange)}</td>
+        <td>${changeCell(item.ce.priceChange)}</td>
+        <td>${flowBadge(item.ce)}</td>
+        <td class="strike-cell"><strong>${price(item.strike, 0)}</strong>${item.isAtm ? '<span class="atm-badge">ATM</span>' : ""}</td>
+        <td>${flowBadge(item.pe)}</td>
+        <td>${changeCell(item.pe.priceChange)}</td>
+        <td>${compact(item.pe.oiChange)}</td>
+      </tr>
+    `).join("");
+  }
+
+  function updateAtmFlowButtons() {
+    const buttons = el.atmFlowWindow.querySelectorAll("button[data-window]");
+    buttons.forEach((button) => {
+      button.classList.toggle("active", button.dataset.window === state.atmFlowWindow);
+    });
+  }
+
+  function buildAtmFlowRow(latest, older, row) {
+    const olderRow = older ? older.rows.find((item) => item.strike === row.strike) : null;
+    return {
+      strike: row.strike,
+      isAtm: row.strike === latest.atmStrike,
+      ce: classifyAtmSideFlow(row.ce, olderRow ? olderRow.ce : null, "CE"),
+      pe: classifyAtmSideFlow(row.pe, olderRow ? olderRow.pe : null, "PE")
+    };
+  }
+
+  function classifyAtmSideFlow(option, olderOption, side) {
+    if (!option || !olderOption || option === olderOption) {
+      return {
+        side,
+        title: "Building",
+        shortTitle: "Build",
+        tone: "neutral",
+        score: 0,
+        priceChange: 0,
+        oiChange: 0
+      };
+    }
+
+    const priceChange = option.ltp - olderOption.ltp;
+    const oiChange = option.oi - olderOption.oi;
+    const enoughOi = Math.abs(oiChange) >= Math.max(25000, olderOption.oi * 0.008);
+    const enoughPrice = Math.abs(priceChange) >= Math.max(0.5, option.ltp * 0.004);
+    const spreadOk = option.spreadPct <= 0.03;
+    const liquid = option.volume >= 15000 || option.oi >= 75000;
+    const flow = nameOptionFlow(side, priceChange, oiChange);
+    const score = flowScore(side, flow.title);
+
+    if (!enoughOi || !enoughPrice || !spreadOk || !liquid) {
+      return {
+        side,
+        title: "Noise / wait",
+        shortTitle: "Noise",
+        tone: "neutral",
+        score: 0,
+        priceChange,
+        oiChange
+      };
+    }
+
+    return {
+      side,
+      title: flow.title,
+      shortTitle: shortFlowTitle(flow.title),
+      tone: flow.tone,
+      score,
+      priceChange,
+      oiChange
+    };
+  }
+
+  function summarizeAtmFlow(rows) {
+    const ceOiTotal = sum(rows, (row) => row.ce.oiChange);
+    const peOiTotal = sum(rows, (row) => row.pe.oiChange);
+    const cePremTotal = sum(rows, (row) => row.ce.priceChange);
+    const pePremTotal = sum(rows, (row) => row.pe.priceChange);
+    const score = sum(rows, (row) => row.ce.score + row.pe.score);
+    const ceCounts = countFlowTitles(rows.map((row) => row.ce));
+    const peCounts = countFlowTitles(rows.map((row) => row.pe));
+    const ceReason = dominantFlowText("CE", ceCounts);
+    const peReason = dominantFlowText("PE", peCounts);
+
+    if (score >= 4) {
+      return {
+        title: "ATM Flow: Bullish support build",
+        tone: "positive",
+        bias: "Bullish",
+        reason: `${peReason}; ${ceReason}`,
+        ceOiTotal,
+        peOiTotal,
+        cePremTotal,
+        pePremTotal
+      };
+    }
+
+    if (score <= -4) {
+      return {
+        title: "ATM Flow: Resistance / bearish pressure",
+        tone: "negative",
+        bias: "Bearish",
+        reason: `${ceReason}; ${peReason}`,
+        ceOiTotal,
+        peOiTotal,
+        cePremTotal,
+        pePremTotal
+      };
+    }
+
+    return {
+      title: "ATM Flow: Mixed / wait",
+      tone: "muted",
+      bias: "Mixed",
+      reason: `${ceReason}; ${peReason}`,
+      ceOiTotal,
+      peOiTotal,
+      cePremTotal,
+      pePremTotal
+    };
+  }
+
+  function flowScore(side, title) {
+    if (title.includes("long buildup")) return side === "CE" ? 2 : -2;
+    if (title.includes("writing")) return side === "CE" ? -2 : 2;
+    if (title.includes("short covering")) return side === "CE" ? 2 : -2;
+    if (title.includes("long unwinding")) return side === "CE" ? -1 : 1;
+    return 0;
+  }
+
+  function shortFlowTitle(title) {
+    if (title.includes("long buildup")) return "Long build";
+    if (title.includes("writing")) return "Writing";
+    if (title.includes("short covering")) return "Covering";
+    if (title.includes("long unwinding")) return "Unwind";
+    return "Neutral";
+  }
+
+  function countFlowTitles(flows) {
+    return flows.reduce((counts, flow) => {
+      counts[flow.shortTitle] = (counts[flow.shortTitle] || 0) + 1;
+      return counts;
+    }, {});
+  }
+
+  function dominantFlowText(side, counts) {
+    const entries = Object.entries(counts)
+      .filter(([name]) => name !== "Noise" && name !== "Build")
+      .sort((a, b) => b[1] - a[1]);
+    if (!entries.length) return `${side}: no clean flow`;
+    return `${side}: ${entries.slice(0, 2).map(([name, count]) => `${count} ${name}`).join(", ")}`;
   }
 
   function renderMatrix() {
@@ -1372,6 +1558,11 @@
   function responseTag(value) {
     const tone = value >= 0.7 ? "good" : value >= 0.45 ? "warn" : "bad";
     return `<span class="tag ${tone}">${ratio(value)}</span>`;
+  }
+
+  function flowBadge(flow) {
+    const tone = flow.tone === "neutral" ? "muted" : flow.tone;
+    return `<span class="tag ${tone}" title="${escapeHtml(flow.title)}">${escapeHtml(flow.shortTitle)}</span>`;
   }
 
   function changeCell(value) {

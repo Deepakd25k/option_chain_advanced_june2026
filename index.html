@@ -120,6 +120,38 @@
               <div><span>ATM Straddle</span><strong id="atmStraddle">--</strong></div>
               <div><span>PCR</span><strong id="pcrValue">--</strong></div>
             </div>
+            <div class="atm-flow-panel">
+              <div class="atm-flow-head">
+                <div>
+                  <p class="eyebrow">ATM ±3 Flow</p>
+                  <h2 id="atmFlowSummary">Building flow read</h2>
+                </div>
+                <div class="segmented" id="atmFlowWindow">
+                  <button type="button" data-window="open" class="active">Open</button>
+                  <button type="button" data-window="300">5m</button>
+                  <button type="button" data-window="600">10m</button>
+                  <button type="button" data-window="900">15m</button>
+                  <button type="button" data-window="1800">30m</button>
+                </div>
+              </div>
+              <div class="atm-flow-totals" id="atmFlowTotals"></div>
+              <div class="mini-table-wrap">
+                <table class="mini-flow-table" id="atmFlowTable">
+                  <thead>
+                    <tr>
+                      <th>CE OI</th>
+                      <th>CE Prem</th>
+                      <th>CE Flow</th>
+                      <th>Strike</th>
+                      <th>PE Flow</th>
+                      <th>PE Prem</th>
+                      <th>PE OI</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
           </article>
         </section>
 
