@@ -7,10 +7,16 @@
     { key: "1800", label: "30m", seconds: 1800 },
     { key: "open", label: "Open", seconds: null }
   ];
-  const CALIBRATION_VERSION = 2;
+  const CALIBRATION_VERSION = 3;
   const CALIBRATION_INTERVAL_MS = 30 * 1000;
   const SIGNAL_COOLDOWN_MS = 5 * 60 * 1000;
   const OUTCOME_TOLERANCE_MS = 45 * 1000;
+  const STRUCTURE_WINDOWS = [
+    { key: "open", label: "Open", seconds: null },
+    { key: "300", label: "5m", seconds: 300 },
+    { key: "900", label: "15m", seconds: 900 },
+    { key: "1800", label: "30m", seconds: 1800 }
+  ];
 
   const state = {
     history: [],
@@ -24,7 +30,13 @@
       confirmations: 0
     },
     signalStartSnapshot: null,
-    pressureRead: null,
+    structureRead: null,
+    structureStability: {
+      key: null,
+      since: null,
+      windows: 0,
+      lastWindowEnd: null
+    },
     calibration: loadCalibrationState(),
     recorder: {
       configured: null,
@@ -52,9 +64,9 @@
   function bindElements() {
     [
       "sourceLine", "recorderStatus", "refreshButton", "pauseButton", "symbolSelect", "expiryInput",
-      "activeWindow", "refreshInterval", "spotPressureCard", "pressureHeadline", "pressureContext",
-      "pressureState", "pressurePeState", "pressurePeOi", "pressurePePremium",
-      "pressureAtmResponse", "pressureTrigger", "pressureInvalidation", "pressureCandleNote", "matrixTable",
+      "activeWindow", "refreshInterval", "marketStructureCard", "structureHeadline", "structureOrigin",
+      "structureState", "structureLocation", "structureTable", "structureEvidence", "structureDecision",
+      "structureLevels", "structureStability", "matrixTable",
       "atmFlowRange", "atmFlowSummaryChips", "atmFlowTable",
       "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable"
     ].forEach((id) => {
@@ -113,6 +125,8 @@
     state.history = [];
     state.candles5m = [];
     state.stable = { key: null, since: null, confirmations: 0 };
+    state.structureRead = null;
+    state.structureStability = { key: null, since: null, windows: 0, lastWindowEnd: null };
     state.signalStartSnapshot = null;
     state.recorder.snapshotCount = 0;
     state.recorder.firstSavedAt = null;
@@ -325,6 +339,9 @@
     const dayOpen = number(payload.underlying && payload.underlying.dayOpen)
       || (state.history[0] && state.history[0].spot)
       || spot;
+    const previousClose = number(payload.underlying && payload.underlying.previousClose)
+      || (state.history[0] && state.history[0].previousClose)
+      || 0;
 
     return {
       source: payload.source || "demo",
@@ -333,6 +350,7 @@
       instrumentKey: payload.instrumentKey || el.symbolSelect.value,
       spot,
       dayOpen,
+      previousClose,
       rows,
       atm,
       atmStrike: atm ? atm.strike : 0,
@@ -369,6 +387,7 @@
     return {
       instrumentKey: side.instrument_key || side.instrumentKey || "",
       ltp,
+      mid,
       bid,
       ask,
       bidQty: number(market.bid_qty) || number(market.bidQty) || number(market.bid_quantity),
@@ -416,15 +435,15 @@
     const latest = lastSnapshot();
     if (!latest) return;
     const active = getWindowMetrics(el.activeWindow.value);
-    const pressureRead = buildFiveMinutePressure(latest);
-    state.pressureRead = pressureRead;
-    const calibrationSnapshotAdded = recordCalibrationSnapshot(latest, active, pressureRead);
+    const structureRead = stabilizeStructureRead(buildMarketStructureRead(latest), latest);
+    state.structureRead = structureRead;
+    const calibrationSnapshotAdded = recordCalibrationSnapshot(latest, active, structureRead);
     if (calibrationSnapshotAdded) {
-      createPressureCalibrationSignal(pressureRead, latest);
+      createStructureCalibrationSignal(structureRead, latest);
       updateSignalOutcomes(latest);
     }
     saveCalibrationState();
-    renderSpotPressure(latest, pressureRead);
+    renderMarketStructure(structureRead);
     renderAtmFlowWatch(latest);
     renderMatrix();
     renderCalibrationLab();
@@ -600,204 +619,581 @@
     return items;
   }
 
-  function renderSpotPressure(latest, pressureRead) {
-    const read = pressureRead || buildFiveMinutePressure(latest);
-    el.spotPressureCard.dataset.tone = read.tone;
-    el.pressureHeadline.textContent = read.headline;
-    el.pressureContext.textContent = read.context;
-    el.pressureState.className = `pressure-state ${read.tone}`;
-    el.pressureState.textContent = read.state;
-    el.pressurePeState.textContent = read.peState;
-    el.pressurePeOi.textContent = read.peOi === null ? "Building" : compact(read.peOi);
-    el.pressurePeOi.className = read.peOi > 0 ? "positive" : read.peOi < 0 ? "negative" : "";
-    el.pressurePePremium.textContent = read.pePremium === null ? "Building" : signed(read.pePremium);
-    el.pressurePePremium.className = read.pePremium < 0 ? "positive" : read.pePremium > 0 ? "negative" : "";
-    el.pressureAtmResponse.textContent = read.atmResponse;
-    el.pressureTrigger.textContent = read.trigger ? price(read.trigger) : "Building";
-    el.pressureInvalidation.textContent = read.invalidation ? price(read.invalidation) : "Building";
-    el.pressureCandleNote.textContent = read.note;
+  function renderMarketStructure(read) {
+    el.marketStructureCard.dataset.tone = read.tone;
+    el.structureHeadline.textContent = read.headline;
+    el.structureOrigin.textContent = read.origin;
+    el.structureState.className = `structure-state ${read.tone}`;
+    el.structureState.textContent = read.state;
+    el.structureLocation.innerHTML = [
+      `<span>Spot <strong>${price(read.spot)}</strong></span>`,
+      `<span>Support <strong>${read.support ? price(read.support, 0) : "Building"}</strong></span>`,
+      `<span>Resistance <strong>${read.resistance ? price(read.resistance, 0) : "Building"}</strong></span>`,
+      `<span>${read.microRange ? `Range <strong>${price(read.microRange.low, 0)}–${price(read.microRange.high, 0)}</strong>` : "Range <strong>Not confirmed</strong>"}</span>`
+    ].join("");
+    el.structureTable.innerHTML = `
+      <div class="structure-table-head">
+        <span>Contract</span>${STRUCTURE_WINDOWS.map((item) => `<span>${item.label}</span>`).join("")}
+      </div>
+      ${read.contracts.map(structureContractRow).join("")}
+    `;
+    el.structureEvidence.innerHTML = read.evidence.map((item) => `
+      <div class="structure-evidence-item ${item.tone}">
+        <span>${escapeHtml(item.label)}</span>
+        <strong>${escapeHtml(item.value)}</strong>
+      </div>
+    `).join("");
+    el.structureDecision.textContent = read.decision;
+    el.structureLevels.textContent = read.trigger
+      ? `Trigger ${price(read.trigger)} · Invalid ${price(read.invalidation)}`
+      : "Trigger and invalidation will appear after a directional structure qualifies";
+    el.structureStability.textContent = read.stability.windows
+      ? `Stable ${read.stability.windows} completed 5m window${read.stability.windows === 1 ? "" : "s"}`
+      : "Completed 5m confirmation building";
   }
 
-  function buildFiveMinutePressure(latest) {
-    const exactCandles = state.candles5m;
-    const candles = exactCandles.length ? exactCandles : buildSnapshotFiveMinuteCandles(latest.time);
-    const source = exactCandles.length ? "Upstox completed 5m OHLC" : "DB snapshot 5m fallback";
-    if (candles.length < 3) {
-      return emptyPressureRead(`Need ${3 - candles.length} more completed 5m candle${candles.length === 2 ? "" : "s"}`, source);
+  function structureContractRow(contract) {
+    return `
+      <div class="structure-contract ${contract.tone}">
+        <div class="structure-contract-name">
+          <span>${escapeHtml(contract.role)}</span>
+          <strong>${price(contract.strike, 0)} ${contract.side}</strong>
+          <em>OI ${compact(contract.currentOi)} · Mid ${price(contract.currentPremium)}</em>
+        </div>
+        ${STRUCTURE_WINDOWS.map((item) => structureWindowCell(contract.windows[item.key], item.label)).join("")}
+      </div>
+    `;
+  }
+
+  function structureWindowCell(windowRead, label) {
+    if (!windowRead || !windowRead.available) {
+      return `<div class="structure-window building"><span>${label}</span><strong>Building</strong><em>Exact history needed</em></div>`;
     }
+    const oiTone = windowRead.oiChange > 0 ? "positive" : windowRead.oiChange < 0 ? "negative" : "muted";
+    const premiumTone = windowRead.premiumChange > 0 ? "positive" : windowRead.premiumChange < 0 ? "negative" : "muted";
+    return `
+      <div class="structure-window">
+        <span>${label}${windowRead.oiRank ? ` · #${windowRead.oiRank}/7` : ""}</span>
+        <strong class="${oiTone}">OI ${compact(windowRead.oiChange)}</strong>
+        <em class="${premiumTone}">Prem ${signed(windowRead.premiumChange)}</em>
+      </div>
+    `;
+  }
 
-    const recent = candles.slice(-6);
-    const zone = Math.max(5, latest.atmStraddle * 0.03);
-    const floorRead = findDefendedFloor(recent, zone);
-    if (!floorRead) {
-      return emptyPressureRead("No price zone has two completed 5m tests yet", source);
-    }
-
-    const last = recent[recent.length - 1];
-    const heldCandles = recent.filter((candle) => candle.start >= floorRead.firstTouch.start);
-    const heldMinutes = Math.max(5, Math.round((last.end - floorRead.firstTouch.start) / 60000));
-    const invalidation = floorRead.floor - zone;
-    const closesBelow = heldCandles.filter((candle) => candle.close < invalidation);
-    const lastTwo = heldCandles.slice(-2);
-    const breakdownConfirmed = lastTwo.length === 2 && lastTwo.every((candle) => candle.close < invalidation);
-    const breakdownWatch = !breakdownConfirmed && last.close < invalidation;
-    const swept = last.low < invalidation && last.close >= floorRead.floor;
-    const priorForTrigger = heldCandles.length > 1 ? heldCandles.slice(-4, -1) : heldCandles;
-    const trigger = priorForTrigger.length ? Math.max(...priorForTrigger.map((candle) => candle.high)) : 0;
-
-    const baselineSnapshot = findSnapshotNear(floorRead.firstTouch.start);
-    const completedSnapshot = findSnapshotNear(last.end);
-    const pe = buildPePressure(baselineSnapshot, completedSnapshot);
-    const floorHeld = heldMinutes >= 10 && closesBelow.length === 0;
-    const upsideTriggered = floorHeld && pe.state === "Strong" && trigger && last.close > trigger;
-
-    let stateLabel = "PRICE HOLDING";
-    let tone = "holding";
-    let headline = `${price(floorRead.floor)} ke neeche ${heldMinutes}m se 5m close nahi`;
-    let note = "Forming 5m candle is not used for confirmation";
-
-    if (breakdownConfirmed && pe.bearishConfirmation) {
-      stateLabel = "BREAKDOWN CONFIRMED";
-      tone = "negative";
-      headline = `${price(invalidation)} ke neeche two completed 5m closes`;
-      note = "Price close and PE premium pressure both confirm failure";
-    } else if (breakdownWatch) {
-      stateLabel = "BREAKDOWN WATCH";
-      tone = "warn";
-      headline = `${price(invalidation)} ke neeche first 5m close; second close pending`;
-      note = "Single close cannot confirm breakdown";
-    } else if (swept) {
-      stateLabel = pe.state === "Strong" ? "SWEEP RECLAIMED" : "SWEEP · OI WAIT";
-      tone = pe.state === "Strong" ? "positive" : "warn";
-      headline = `${price(last.low)} sweep hua, ${price(floorRead.floor)} ke upar 5m close`;
-      note = "Wick below the zone was reclaimed on a completed candle";
-    } else if (upsideTriggered) {
-      stateLabel = "UPSIDE TRIGGERED";
-      tone = "positive";
-      headline = `${price(floorRead.floor)} floor held and ${price(trigger)} trigger closed above`;
-      note = "Floor, PE writing and price trigger are aligned";
-    } else if (floorHeld && pe.state === "Strong") {
-      stateLabel = "UPSIDE PRESSURE";
-      tone = "positive";
-    } else if (!floorHeld) {
-      stateLabel = "FLOOR BUILDING";
-      tone = "building";
-    }
-
+  function buildMarketStructureRead(latest) {
+    const step = inferStrikeStep(latest.rows);
+    const openingSnapshots = openingBaselineSnapshots(latest);
+    const openingSupport = buildOpeningWall(openingSnapshots, "PE", step);
+    const openingResistance = buildOpeningWall(openingSnapshots, "CE", step);
+    const supportWall = resolveStableOiWall(latest, "PE", openingSupport, step);
+    const resistanceWall = resolveStableOiWall(latest, "CE", openingResistance, step);
+    const support = supportWall ? supportWall.strike : 0;
+    const resistance = resistanceWall ? resistanceWall.strike : 0;
+    const contracts = buildStructureContracts(latest, openingSnapshots, support, resistance);
+    const microRange = detectMicroRange(latest, step);
+    const location = structureLocation(latest.spot, support, resistance, step, microRange);
+    const origin = buildSessionOrigin(latest, openingSnapshots, openingSupport, openingResistance, step);
+    const interpretation = interpretMarketStructure({
+      latest,
+      step,
+      support,
+      resistance,
+      supportWall,
+      resistanceWall,
+      contracts,
+      microRange,
+      location,
+      openingReady: openingSnapshots.length >= 3
+    });
     return {
-      state: stateLabel,
-      tone,
-      headline,
-      context: `${floorRead.tests} defended tests · ${source} · ${pe.strikeText}`,
-      peState: pe.state,
-      peOi: pe.oiChange,
-      pePremium: pe.premiumChange,
-      atmResponse: pe.response,
-      trigger,
-      invalidation,
-      note
+      ...interpretation,
+      origin,
+      spot: latest.spot,
+      support,
+      resistance,
+      contracts,
+      microRange,
+      supportWall,
+      resistanceWall
     };
   }
 
-  function emptyPressureRead(headline, source) {
+  function inferStrikeStep(rows) {
+    const differences = rows.slice(1).map((row, index) => row.strike - rows[index].strike).filter((value) => value > 0);
+    return median(differences) || 50;
+  }
+
+  function openingBaselineSnapshots(latest) {
+    const sessionDate = istSessionDate(latest.time);
+    return state.history.filter((snapshot) => {
+      if (snapshot.source !== latest.source || istSessionDate(snapshot.time) !== sessionDate) return false;
+      const parts = istParts(snapshot.time);
+      const minute = parts.hour * 60 + parts.minute;
+      return minute >= 9 * 60 + 15 && minute < 9 * 60 + 20;
+    });
+  }
+
+  function buildOpeningWall(snapshots, side, step) {
+    if (snapshots.length < 3) return null;
+    const strikes = [...new Set(snapshots.flatMap((snapshot) => snapshot.rows.map((row) => row.strike)))].sort((a, b) => a - b);
+    const rows = strikes.map((strike) => {
+      const options = snapshots.map((snapshot) => snapshot.rows.find((row) => row.strike === strike)).filter(Boolean);
+      return {
+        strike,
+        ce: { oi: median(options.map((row) => row.ce.oi)) },
+        pe: { oi: median(options.map((row) => row.pe.oi)) }
+      };
+    });
+    const spot = median(snapshots.map((snapshot) => snapshot.spot));
+    const wall = findClusterWall(rows, spot, side, step);
+    return wall && wall.significant ? { ...wall, source: "opening median", stable: true, confirmations: 1 } : null;
+  }
+
+  function findClusterWall(rows, spot, side, step) {
+    const isSupport = side === "PE";
+    const candidates = rows.filter((row) => (
+      isSupport
+        ? row.strike <= spot && spot - row.strike <= step * 5
+        : row.strike >= spot && row.strike - spot <= step * 5
+    )).map((row) => {
+      const adjacentStrike = row.strike + (isSupport ? -step : step);
+      const adjacent = rows.find((item) => item.strike === adjacentStrike);
+      const option = isSupport ? row.pe : row.ce;
+      const adjacentOption = adjacent ? (isSupport ? adjacent.pe : adjacent.ce) : null;
+      return {
+        strike: row.strike,
+        oi: option.oi,
+        clusterOi: option.oi + (adjacentOption ? adjacentOption.oi : 0)
+      };
+    }).filter((item) => item.clusterOi > 0).sort((a, b) => b.clusterOi - a.clusterOi || Math.abs(a.strike - spot) - Math.abs(b.strike - spot));
+    if (!candidates.length) return null;
+    const center = median(candidates.map((item) => item.clusterOi));
+    const mad = median(candidates.map((item) => Math.abs(item.clusterOi - center)));
     return {
-      state: "BUILDING",
-      tone: "building",
-      headline,
-      context: `${source} · completed candles only`,
-      peState: "History building",
-      peOi: null,
-      pePremium: null,
-      atmResponse: "Waiting",
-      trigger: 0,
-      invalidation: 0,
-      note: "Forming 5m candle is not used for confirmation"
+      ...candidates[0],
+      significant: candidates[0].clusterOi >= center + mad,
+      secondClusterOi: candidates[1] ? candidates[1].clusterOi : 0
     };
   }
 
-  function findDefendedFloor(candles, zone) {
-    const candidates = candles.map((candle) => {
-      const near = candles.filter((item) => Math.abs(item.low - candle.low) <= zone);
-      if (near.length < 2) return null;
-      const sweeps = candles.filter((item) => item.low < candle.low - zone && item.close >= candle.low);
-      const touches = [...new Map([...near, ...sweeps].map((item) => [item.start, item])).values()]
-        .sort((a, b) => a.start - b.start);
-      return {
-        floor: median(near.map((item) => item.low)),
-        tests: touches.length,
-        nearTests: near.length,
-        firstTouch: touches[0],
-        lastTouch: touches[touches.length - 1]
-      };
-    }).filter(Boolean);
-
-    return candidates.sort((a, b) => (
-      b.nearTests - a.nearTests
-      || b.tests - a.tests
-      || b.lastTouch.start - a.lastTouch.start
-    ))[0] || null;
+  function resolveStableOiWall(latest, side, openingWall, step) {
+    const snapshots = completedWindowSnapshots(latest.time, 3);
+    const candidates = snapshots
+      .map((snapshot) => findClusterWall(snapshot.rows, snapshot.spot, side, step))
+      .filter((wall) => wall && wall.significant);
+    if (candidates.length >= 2 && candidates[0].strike === candidates[1].strike) {
+      let confirmations = 2;
+      if (candidates[2] && candidates[2].strike === candidates[0].strike) confirmations = 3;
+      return { ...candidates[0], source: "completed 5m", stable: true, confirmations };
+    }
+    if (candidates.length >= 3 && candidates[1].strike === candidates[2].strike) {
+      return { ...candidates[1], source: "prior stable wall", stable: true, confirmations: 2, pendingStrike: candidates[0].strike };
+    }
+    if (openingWall) return openingWall;
+    const latestCandidate = findClusterWall(latest.rows, latest.spot, side, step);
+    const current = candidates[0] || (latestCandidate && latestCandidate.significant ? latestCandidate : null);
+    return current ? { ...current, source: "building", stable: false, confirmations: 0 } : null;
   }
 
-  function buildPePressure(baseline, current) {
-    if (!baseline || !current || baseline === current) {
-      return {
-        state: "History building",
-        response: "Waiting",
-        oiChange: null,
-        premiumChange: null,
-        bearishConfirmation: false,
-        strikeText: "PE history building"
-      };
+  function completedWindowSnapshots(referenceTime, count) {
+    const lastEnd = Math.floor(referenceTime / 300000) * 300000;
+    const snapshots = [];
+    for (let index = 0; index < count; index += 1) {
+      const snapshot = findSnapshotNear(lastEnd - index * 300000);
+      if (snapshot && !snapshots.some((item) => item.time === snapshot.time)) snapshots.push(snapshot);
     }
+    return snapshots;
+  }
 
-    const atmIndex = baseline.rows.findIndex((row) => row.strike === baseline.atmStrike);
-    const strikes = [baseline.atmStrike];
-    if (atmIndex > 0) strikes.push(baseline.rows[atmIndex - 1].strike);
-    const paired = strikes.map((strike) => ({
-      baseline: baseline.rows.find((row) => row.strike === strike),
-      current: current.rows.find((row) => row.strike === strike)
-    })).filter((pair) => pair.baseline && pair.current);
+  function buildStructureContracts(latest, openingSnapshots, support, resistance) {
+    const definitions = [];
+    if (support) definitions.push({ role: support === latest.atmStrike ? "Support + ATM" : "Support", strike: support, side: "PE" });
+    if (latest.atmStrike !== support) definitions.push({ role: "ATM", strike: latest.atmStrike, side: "PE" });
+    definitions.push({ role: resistance === latest.atmStrike ? "ATM + Resistance" : "ATM", strike: latest.atmStrike, side: "CE" });
+    if (resistance && resistance !== latest.atmStrike) definitions.push({ role: "Resistance", strike: resistance, side: "CE" });
+    return definitions.map((definition) => buildStructureContract(latest, openingSnapshots, definition));
+  }
 
-    if (!paired.length) {
-      return {
-        state: "Strike history missing",
-        response: "Waiting",
-        oiChange: null,
-        premiumChange: null,
-        bearishConfirmation: false,
-        strikeText: "same-strike PE history missing"
-      };
-    }
-
-    const oiChange = sum(paired, (pair) => pair.current.pe.oi - pair.baseline.pe.oi);
-    const premiumChange = sum(paired, (pair) => pair.current.pe.ltp - pair.baseline.pe.ltp);
-    const baselineIndex = Math.max(0, atmIndex - 3);
-    const universe = baseline.rows.slice(baselineIndex, Math.min(baseline.rows.length, atmIndex + 4))
-      .map((row) => {
-        const currentRow = current.rows.find((item) => item.strike === row.strike);
-        return currentRow ? {
-          oi: currentRow.pe.oi - row.pe.oi,
-          premium: currentRow.pe.ltp - row.pe.ltp
-        } : null;
-      }).filter(Boolean);
-    const oiAbs = universe.map((item) => Math.abs(item.oi));
-    const premiumAbs = universe.map((item) => Math.abs(item.premium));
-    const oiCenter = median(oiAbs);
-    const premiumCenter = median(premiumAbs);
-    const oiThreshold = Math.max(50000, (oiCenter + 1.5 * median(oiAbs.map((value) => Math.abs(value - oiCenter)))) * Math.sqrt(paired.length));
-    const premiumThreshold = Math.max(1, (premiumCenter + median(premiumAbs.map((value) => Math.abs(value - premiumCenter)))) * Math.sqrt(paired.length));
-    const strongWriting = oiChange >= oiThreshold && premiumChange <= -premiumThreshold;
-    const developingWriting = oiChange > 0 && premiumChange < 0;
-    const bearishConfirmation = premiumChange >= premiumThreshold && (oiChange > 0 || oiChange <= -oiThreshold);
-
+  function buildStructureContract(latest, openingSnapshots, definition) {
+    const row = latest.rows.find((item) => item.strike === definition.strike);
+    const option = row ? (definition.side === "CE" ? row.ce : row.pe) : null;
+    const windows = {};
+    STRUCTURE_WINDOWS.forEach((item) => {
+      windows[item.key] = buildStructureWindow(latest, openingSnapshots, definition.strike, definition.side, item.seconds);
+    });
+    const flow = readContractFlow(windows);
     return {
-      state: strongWriting ? "Strong" : developingWriting ? "Developing" : bearishConfirmation ? "Under risk" : "Mixed",
-      response: strongWriting ? "Confirming" : developingWriting ? "Early" : bearishConfirmation ? "Not confirming" : "Neutral",
+      ...definition,
+      currentOi: option ? option.oi : 0,
+      currentPremium: option ? option.mid : 0,
+      windows,
+      flow,
+      tone: structureContractTone(definition.side, flow.state)
+    };
+  }
+
+  function structureContractTone(side, flowState) {
+    const adding = flowState === "Sustained addition" || flowState === "Addition building";
+    const withdrawing = flowState === "Sustained withdrawal" || flowState === "Withdrawal building" || flowState.includes("recent withdrawal");
+    if (adding) return side === "PE" ? "positive" : "negative";
+    if (withdrawing) return side === "PE" ? "negative" : "positive";
+    if (flowState.includes("building")) return "warn";
+    return "neutral";
+  }
+
+  function buildStructureWindow(latest, openingSnapshots, strike, side, seconds) {
+    const reference = seconds === null
+      ? openingOptionReference(openingSnapshots, strike, side)
+      : snapshotOptionReference(getOlderSnapshot(seconds), strike, side);
+    const currentRow = latest.rows.find((row) => row.strike === strike);
+    const currentOption = currentRow ? (side === "CE" ? currentRow.ce : currentRow.pe) : null;
+    if (!reference || !currentOption) return { available: false };
+
+    const premiumChange = currentOption.mid - reference.mid;
+    const oiChange = currentOption.oi - reference.oi;
+    const spotChange = latest.spot - reference.spot;
+    const signedDelta = side === "CE" ? reference.delta : -reference.delta;
+    const rawResidual = premiumChange - signedDelta * spotChange;
+    const oppositeSide = side === "CE" ? "PE" : "CE";
+    const oppositeReference = seconds === null
+      ? openingOptionReference(openingSnapshots, strike, oppositeSide)
+      : snapshotOptionReference(getOlderSnapshot(seconds), strike, oppositeSide);
+    const oppositeOption = side === "CE" ? currentRow.pe : currentRow.ce;
+    const oppositeSignedDelta = oppositeReference ? (oppositeSide === "CE" ? oppositeReference.delta : -oppositeReference.delta) : 0;
+    const oppositeResidual = oppositeReference
+      ? oppositeOption.mid - oppositeReference.mid - oppositeSignedDelta * (latest.spot - oppositeReference.spot)
+      : rawResidual;
+    const commonResidual = (rawResidual + oppositeResidual) / 2;
+    const residual = rawResidual - commonResidual;
+    const universe = structureWindowUniverse(latest, openingSnapshots, side, seconds);
+    const oiMagnitude = universe.map((item) => Math.abs(item.oiChange));
+    const oiCenter = median(oiMagnitude);
+    const oiMad = median(oiMagnitude.map((value) => Math.abs(value - oiCenter)));
+    const residualMagnitude = universe.map((item) => Math.abs(item.residual));
+    const residualCenter = median(residualMagnitude);
+    const residualMad = median(residualMagnitude.map((value) => Math.abs(value - residualCenter)));
+    const oiRank = [...universe].sort((a, b) => Math.abs(b.oiChange) - Math.abs(a.oiChange)).findIndex((item) => item.strike === strike) + 1;
+    return {
+      available: true,
       oiChange,
       premiumChange,
-      bearishConfirmation,
-      strikeText: `${paired.map((pair) => price(pair.baseline.strike, 0)).join(" + ")} PE`
+      residual,
+      rawResidual,
+      commonResidual,
+      oiRank: oiRank > 0 ? oiRank : null,
+      materialOi: Math.abs(oiChange) > 0 && Math.abs(oiChange) >= oiCenter + oiMad,
+      materialResidual: Math.abs(residual) > 0 && Math.abs(residual) >= residualCenter + residualMad
     };
+  }
+
+  function structureWindowUniverse(latest, openingSnapshots, side, seconds) {
+    const atmIndex = latest.rows.findIndex((row) => row.strike === latest.atmStrike);
+    return latest.rows.slice(Math.max(0, atmIndex - 3), atmIndex + 4).map((row) => {
+      const reference = seconds === null
+        ? openingOptionReference(openingSnapshots, row.strike, side)
+        : snapshotOptionReference(getOlderSnapshot(seconds), row.strike, side);
+      if (!reference) return null;
+      const option = side === "CE" ? row.ce : row.pe;
+      const signedDelta = side === "CE" ? reference.delta : -reference.delta;
+      const premiumChange = option.mid - reference.mid;
+      const oppositeSide = side === "CE" ? "PE" : "CE";
+      const oppositeReference = seconds === null
+        ? openingOptionReference(openingSnapshots, row.strike, oppositeSide)
+        : snapshotOptionReference(getOlderSnapshot(seconds), row.strike, oppositeSide);
+      const oppositeOption = side === "CE" ? row.pe : row.ce;
+      const rawResidual = premiumChange - signedDelta * (latest.spot - reference.spot);
+      const oppositeSignedDelta = oppositeReference ? (oppositeSide === "CE" ? oppositeReference.delta : -oppositeReference.delta) : 0;
+      const oppositeResidual = oppositeReference
+        ? oppositeOption.mid - oppositeReference.mid - oppositeSignedDelta * (latest.spot - oppositeReference.spot)
+        : rawResidual;
+      return {
+        strike: row.strike,
+        oiChange: option.oi - reference.oi,
+        residual: rawResidual - (rawResidual + oppositeResidual) / 2
+      };
+    }).filter(Boolean);
+  }
+
+  function openingOptionReference(snapshots, strike, side) {
+    const points = snapshots.map((snapshot) => {
+      const row = snapshot.rows.find((item) => item.strike === strike);
+      if (!row) return null;
+      const option = side === "CE" ? row.ce : row.pe;
+      return { spot: snapshot.spot, oi: option.oi, mid: option.mid, delta: option.delta };
+    }).filter(Boolean);
+    if (points.length < 3) return null;
+    return {
+      spot: median(points.map((item) => item.spot)),
+      oi: median(points.map((item) => item.oi)),
+      mid: median(points.map((item) => item.mid)),
+      delta: median(points.map((item) => item.delta))
+    };
+  }
+
+  function snapshotOptionReference(snapshot, strike, side) {
+    if (!snapshot) return null;
+    const row = snapshot.rows.find((item) => item.strike === strike);
+    if (!row) return null;
+    const option = side === "CE" ? row.ce : row.pe;
+    return { spot: snapshot.spot, oi: option.oi, mid: option.mid, delta: option.delta };
+  }
+
+  function readContractFlow(windows) {
+    const open = windows.open;
+    const recent = windows["300"];
+    const medium = windows["900"];
+    const long = windows["1800"];
+    if (!open.available || !recent.available) return { state: "Building", tone: "building" };
+    if (!medium.available) {
+      if (open.oiChange > 0 && recent.oiChange > 0 && (open.materialOi || recent.materialOi)) {
+        return { state: "Addition building", tone: "warn" };
+      }
+      if (open.oiChange < 0 && recent.oiChange < 0 && (open.materialOi || recent.materialOi)) {
+        return { state: "Withdrawal building", tone: "warn" };
+      }
+      return { state: "History building", tone: "building" };
+    }
+    const availableTrend = [recent, medium, long].filter((item) => item.available);
+    const allPositive = open.oiChange > 0 && availableTrend.every((item) => item.oiChange > 0);
+    const allNegative = open.oiChange < 0 && availableTrend.every((item) => item.oiChange < 0);
+    const material = [open, ...availableTrend].some((item) => item.materialOi);
+    if (allPositive && material) return { state: "Sustained addition", tone: "positive" };
+    if (allNegative && material) return { state: "Sustained withdrawal", tone: "negative" };
+    if (open.oiChange > 0 && recent.oiChange < 0) return { state: "Session add · recent withdrawal", tone: "warn" };
+    if (open.oiChange < 0 && recent.oiChange > 0) return { state: "Session exit · recent addition", tone: "warn" };
+    return { state: "Mixed inventory", tone: "neutral" };
+  }
+
+  function detectMicroRange(latest, step) {
+    const candles = state.candles5m.length ? state.candles5m : buildSnapshotFiveMinuteCandles(latest.time);
+    for (let length = Math.min(6, candles.length); length >= 3; length -= 1) {
+      const recent = candles.slice(-length);
+      const high = Math.max(...recent.map((candle) => candle.high));
+      const low = Math.min(...recent.map((candle) => candle.low));
+      const width = high - low;
+      if (width <= 0 || width > step) continue;
+      const upperBoundary = low + width * 0.75;
+      const lowerBoundary = low + width * 0.25;
+      const upperTouches = recent.filter((candle) => candle.high >= upperBoundary).length;
+      const lowerTouches = recent.filter((candle) => candle.low <= lowerBoundary).length;
+      if (upperTouches >= 2 && lowerTouches >= 2) {
+        return { low, high, width, minutes: length * 5, upperTouches, lowerTouches };
+      }
+    }
+    return null;
+  }
+
+  function structureLocation(spot, support, resistance, step, microRange) {
+    const nearDistance = step / 2;
+    const supportDistance = support ? Math.abs(spot - support) : Infinity;
+    const resistanceDistance = resistance ? Math.abs(resistance - spot) : Infinity;
+    if (supportDistance <= nearDistance && supportDistance <= resistanceDistance) return microRange ? "MICRO-RANGE AT SUPPORT" : "NEAR SUPPORT";
+    if (resistanceDistance <= nearDistance) return microRange ? "MICRO-RANGE AT RESISTANCE" : "NEAR RESISTANCE";
+    if (microRange) return "MICRO-RANGE";
+    return "BETWEEN OI WALLS";
+  }
+
+  function buildSessionOrigin(latest, openingSnapshots, supportWall, resistanceWall, step) {
+    if (openingSnapshots.length < 3 || !supportWall || !resistanceWall) {
+      return "Opening inventory building · need valid 09:15–09:20 snapshots";
+    }
+    const openingSpot = latest.dayOpen || median(openingSnapshots.map((snapshot) => snapshot.spot));
+    const gap = latest.previousClose ? openingSpot - latest.previousClose : null;
+    const gapText = gap === null ? "Previous close unavailable" : gap >= 0 ? `Gap Up ${price(Math.abs(gap), 0)} pts` : `Gap Down ${price(Math.abs(gap), 0)} pts`;
+    const supportDistance = Math.abs(openingSpot - supportWall.strike);
+    const resistanceDistance = Math.abs(resistanceWall.strike - openingSpot);
+    const nearDistance = step / 2;
+    let location = "Opened between OI walls";
+    if (openingSpot < supportWall.strike) location = `Opened below ${price(supportWall.strike, 0)} support`;
+    else if (openingSpot > resistanceWall.strike) location = `Opened above ${price(resistanceWall.strike, 0)} resistance`;
+    else if (supportDistance <= nearDistance && supportDistance <= resistanceDistance) location = `Opened near ${price(supportWall.strike, 0)} support`;
+    else if (resistanceDistance <= nearDistance) location = `Opened near ${price(resistanceWall.strike, 0)} resistance`;
+    return `${gapText} · ${location}`;
+  }
+
+  function interpretMarketStructure(input) {
+    const { latest, step, support, resistance, contracts, microRange, location, openingReady } = input;
+    const supportPe = findStructureContract(contracts, support, "PE");
+    const resistanceCe = findStructureContract(contracts, resistance, "CE");
+    const atmPe = findStructureContract(contracts, latest.atmStrike, "PE");
+    const atmCe = findStructureContract(contracts, latest.atmStrike, "CE");
+    const supportFlow = supportPe ? supportPe.flow : { state: "Building" };
+    const resistanceFlow = resistanceCe ? resistanceCe.flow : { state: "Building" };
+    const supportPremium = contractPremiumRead(supportPe);
+    const resistancePremium = contractPremiumRead(resistanceCe);
+    const atmPePremium = contractPremiumRead(atmPe);
+    const atmCePremium = contractPremiumRead(atmCe);
+    const supportAdding = supportFlow.state === "Sustained addition";
+    const supportWithdrawing = supportFlow.state === "Sustained withdrawal" || supportFlow.state.includes("recent withdrawal");
+    const resistanceAdding = resistanceFlow.state === "Sustained addition";
+    const resistanceWithdrawing = resistanceFlow.state === "Sustained withdrawal" || resistanceFlow.state.includes("recent withdrawal");
+    const atmPeAdding = atmPe && atmPe.flow.state === "Sustained addition";
+    const atmPeWithdrawing = atmPe && (atmPe.flow.state === "Sustained withdrawal" || atmPe.flow.state.includes("recent withdrawal"));
+    const atmCeAdding = atmCe && atmCe.flow.state === "Sustained addition";
+    const atmCeWithdrawing = atmCe && (atmCe.flow.state === "Sustained withdrawal" || atmCe.flow.state.includes("recent withdrawal"));
+    const supportSuppressed = supportPremium === "Suppressed";
+    const resistanceSuppressed = resistancePremium === "Suppressed";
+    const peLeading = supportPremium === "Leading" || atmPePremium === "Leading";
+    const ceLeading = resistancePremium === "Leading" || atmCePremium === "Leading";
+    const upsideGroups = [
+      supportAdding && resistanceWithdrawing,
+      atmPeAdding || atmCeWithdrawing,
+      ceLeading || supportSuppressed
+    ];
+    const downsideGroups = [
+      resistanceAdding && supportWithdrawing,
+      atmCeAdding || atmPeWithdrawing,
+      peLeading || resistanceSuppressed
+    ];
+    const upsideAgreement = upsideGroups.filter(Boolean).length;
+    const downsideAgreement = downsideGroups.filter(Boolean).length;
+    const dataReady = openingReady && supportPe && resistanceCe && contracts.some((contract) => contract.windows["300"].available);
+
+    let stateLabel = "DATA BUILDING";
+    let decision = "WAIT FOR EXACT HISTORY";
+    let tone = "building";
+    if (dataReady && location.includes("SUPPORT")) {
+      if (supportAdding && supportSuppressed && atmCeWithdrawing && ceLeading) {
+        stateLabel = "SUPPORT DEFENDED";
+        decision = "SUPPORT DEFENDED · UPSIDE RELEASE";
+        tone = "positive";
+      } else if (supportAdding && atmCeAdding && atmCePremium === "Suppressed") {
+        stateLabel = "SUPPORT HELD";
+        decision = "SUPPORT HELD · BOUNCE CAPPED";
+        tone = "warn";
+      } else if (supportWithdrawing && (atmCeAdding || atmPeWithdrawing) && peLeading) {
+        stateLabel = "SUPPORT WITHDRAWAL";
+        decision = "BREAKDOWN PRESSURE";
+        tone = "negative";
+      } else {
+        stateLabel = "SUPPORT TEST";
+        decision = "SUPPORT TEST · EVIDENCE BUILDING";
+        tone = "warn";
+      }
+    } else if (dataReady && location.includes("RESISTANCE")) {
+      if (resistanceAdding && resistanceSuppressed && atmPeWithdrawing && peLeading) {
+        stateLabel = "CEILING DEFENDED";
+        decision = "CEILING DEFENDED · DOWNSIDE RELEASE";
+        tone = "negative";
+      } else if (resistanceAdding && atmPeAdding && atmPePremium === "Suppressed") {
+        stateLabel = "CEILING HELD";
+        decision = "CEILING HELD · RANGE LOCK";
+        tone = "warn";
+      } else if (resistanceWithdrawing && (atmPeAdding || atmCeWithdrawing) && ceLeading) {
+        stateLabel = "CEILING WITHDRAWAL";
+        decision = "BREAKOUT PRESSURE";
+        tone = "positive";
+      } else {
+        stateLabel = "RESISTANCE TEST";
+        decision = "RESISTANCE TEST · EVIDENCE BUILDING";
+        tone = "warn";
+      }
+    } else if (dataReady && microRange) {
+      if (upsideAgreement === 3 && upsideAgreement > downsideAgreement) {
+        stateLabel = "MICRO-RANGE";
+        decision = "RANGE PRESSURE UP";
+        tone = "positive";
+      } else if (downsideAgreement === 3 && downsideAgreement > upsideAgreement) {
+        stateLabel = "MICRO-RANGE";
+        decision = "RANGE PRESSURE DOWN";
+        tone = "negative";
+      } else if (supportAdding && resistanceAdding && supportSuppressed && resistanceSuppressed) {
+        stateLabel = "MICRO-RANGE";
+        decision = "RANGE LOCKED · BUYER EDGE ABSENT";
+        tone = "warn";
+      } else if (supportWithdrawing && resistanceWithdrawing) {
+        stateLabel = "MICRO-RANGE";
+        decision = "EXPANSION ARMED · DIRECTION PENDING";
+        tone = "warn";
+      } else {
+        stateLabel = "MICRO-RANGE";
+        decision = "RANGE MIXED · WAIT";
+        tone = "neutral";
+      }
+    } else if (dataReady) {
+      if (upsideAgreement === 3 && upsideAgreement > downsideAgreement) {
+        stateLabel = "BETWEEN WALLS";
+        decision = "STRUCTURE TILTING UP";
+        tone = "positive";
+      } else if (downsideAgreement === 3 && downsideAgreement > upsideAgreement) {
+        stateLabel = "BETWEEN WALLS";
+        decision = "STRUCTURE TILTING DOWN";
+        tone = "negative";
+      } else if (supportAdding && resistanceAdding && supportSuppressed && resistanceSuppressed) {
+        stateLabel = "BETWEEN WALLS";
+        decision = "TWO-SIDED WRITING · RANGE RISK";
+        tone = "warn";
+      } else {
+        stateLabel = "BETWEEN WALLS";
+        decision = "INVENTORY MIXED · WAIT";
+        tone = "neutral";
+      }
+    }
+
+    const bullish = tone === "positive";
+    const bearish = tone === "negative";
+    const trigger = bullish
+      ? microRange ? microRange.high : support ? support + step / 2 : resistance
+      : bearish
+        ? microRange ? microRange.low : resistance ? resistance - step / 2 : support
+        : 0;
+    const invalidation = bullish
+      ? microRange ? microRange.low : support ? support - step / 2 : 0
+      : bearish
+        ? microRange ? microRange.high : resistance ? resistance + step / 2 : 0
+        : 0;
+    const evidence = [
+      { label: "Support PE", value: `${supportFlow.state} · premium ${supportPremium.toLowerCase()}`, tone: evidenceTone(supportAdding, supportWithdrawing) },
+      { label: "ATM Flow", value: `PE ${atmPe ? atmPe.flow.state.toLowerCase() : "building"} · CE ${atmCe ? atmCe.flow.state.toLowerCase() : "building"}`, tone: evidenceTone(atmPeAdding || atmCeWithdrawing, atmPeWithdrawing || atmCeAdding) },
+      { label: "Resistance CE", value: `${resistanceFlow.state} · premium ${resistancePremium.toLowerCase()}`, tone: evidenceTone(resistanceWithdrawing, resistanceAdding) }
+    ];
+    const supportFive = supportPe && supportPe.windows["300"].available ? supportPe.windows["300"] : null;
+    return {
+      state: stateLabel,
+      decision,
+      tone,
+      headline: `${location} · ${microRange ? `${microRange.minutes}m rotation` : "live OI wall read"}`,
+      evidence,
+      trigger,
+      invalidation,
+      peOi: supportFive ? supportFive.oiChange : null,
+      pePremium: supportFive ? supportFive.premiumChange : null,
+      atmResponse: `${Math.max(upsideAgreement, downsideAgreement)}/3 evidence groups`,
+      note: evidence.map((item) => `${item.label}: ${item.value}`).join(" · ")
+    };
+  }
+
+  function findStructureContract(contracts, strike, side) {
+    return contracts.find((contract) => contract.strike === strike && contract.side === side) || null;
+  }
+
+  function contractPremiumRead(contract) {
+    if (!contract) return "Building";
+    const windowRead = contract.windows["300"].available ? contract.windows["300"] : contract.windows["900"];
+    if (!windowRead || !windowRead.available || !windowRead.materialResidual) return "Neutral";
+    if (windowRead.residual < 0) return "Suppressed";
+    if (windowRead.residual > 0) return "Leading";
+    return "Neutral";
+  }
+
+  function evidenceTone(positiveEvidence, negativeEvidence) {
+    if (positiveEvidence && !negativeEvidence) return "positive";
+    if (negativeEvidence && !positiveEvidence) return "negative";
+    return "neutral";
+  }
+
+  function stabilizeStructureRead(read, latest) {
+    const candles = state.candles5m.length ? state.candles5m : buildSnapshotFiveMinuteCandles(latest.time);
+    const lastWindowEnd = candles.length ? candles[candles.length - 1].end : Math.floor(latest.time / 300000) * 300000;
+    const key = `${read.state}:${read.decision}:${read.support}:${read.resistance}`;
+    if (state.structureStability.key !== key) {
+      state.structureStability = { key, since: latest.time, windows: 0, lastWindowEnd };
+    } else if (lastWindowEnd > state.structureStability.lastWindowEnd) {
+      state.structureStability.windows += 1;
+      state.structureStability.lastWindowEnd = lastWindowEnd;
+    }
+    read.stability = { ...state.structureStability };
+    return read;
   }
 
   function findSnapshotNear(time) {
@@ -1679,7 +2075,7 @@
     const responseSuggestion = suggestResponseThreshold(completed);
     return {
       app: "Option Buyer Cockpit",
-      version: "calibration-v2",
+      version: "calibration-v3",
       exportedAt: new Date().toISOString(),
       sessionDate: state.calibration.sessionDate,
       instrumentKey: el.symbolSelect.value,
@@ -1702,7 +2098,7 @@
     };
   }
 
-  function recordCalibrationSnapshot(latest, active, pressureRead) {
+  function recordCalibrationSnapshot(latest, active, structureRead) {
     if (latest.source !== "live") {
       state.calibration.ignored.nonLive += 1;
       return false;
@@ -1733,14 +2129,15 @@
       pcr: latest.pcr,
       callOi: latest.callOi,
       putOi: latest.putOi,
-      callWall: latest.walls.callWall ? latest.walls.callWall.strike : null,
-      putWall: latest.walls.putWall ? latest.walls.putWall.strike : null,
-      pressureState: pressureRead.state,
-      pressureTone: pressureRead.tone,
-      pressureTrigger: pressureRead.trigger,
-      pressureInvalidation: pressureRead.invalidation,
-      peOiChange: pressureRead.peOi,
-      pePremiumChange: pressureRead.pePremium,
+      callWall: structureRead.resistance || null,
+      putWall: structureRead.support || null,
+      structureState: structureRead.state,
+      structureDecision: structureRead.decision,
+      structureTone: structureRead.tone,
+      structureTrigger: structureRead.trigger,
+      structureInvalidation: structureRead.invalidation,
+      supportPeOiChange: structureRead.peOi,
+      supportPePremiumChange: structureRead.pePremium,
       spotChange: active.spotChange,
       straddleChange: active.straddleChange,
       ivChange: active.ivChange
@@ -1749,24 +2146,36 @@
     return true;
   }
 
-  function createPressureCalibrationSignal(pressureRead, latest) {
-    const side = pressureRead.state === "UPSIDE TRIGGERED"
+  function createStructureCalibrationSignal(structureRead, latest) {
+    const bullishSetups = [
+      "SUPPORT DEFENDED · UPSIDE RELEASE",
+      "RANGE PRESSURE UP",
+      "BREAKOUT PRESSURE",
+      "STRUCTURE TILTING UP"
+    ];
+    const bearishSetups = [
+      "CEILING DEFENDED · DOWNSIDE RELEASE",
+      "RANGE PRESSURE DOWN",
+      "BREAKDOWN PRESSURE",
+      "STRUCTURE TILTING DOWN"
+    ];
+    const side = bullishSetups.includes(structureRead.decision)
       ? "CE"
-      : pressureRead.state === "BREAKDOWN CONFIRMED"
+      : bearishSetups.includes(structureRead.decision)
         ? "PE"
         : null;
-    if (!side) {
+    if (!side || !structureRead.stability || structureRead.stability.windows < 2) {
       state.calibration.lastActionState = null;
       state.calibration.ignored.nonActionable += 1;
       return;
     }
 
-    if (state.calibration.lastActionState === pressureRead.state) {
+    if (state.calibration.lastActionState === structureRead.decision) {
       state.calibration.ignored.cooldown += 1;
       return;
     }
 
-    const setupLevel = side === "CE" ? pressureRead.trigger : pressureRead.invalidation;
+    const setupLevel = structureRead.trigger;
     const setupKey = `${latest.instrumentKey}:${latest.expiry}:${side}:${price(setupLevel, 0)}`;
     const lastSignal = state.calibration.signals[0];
     const setupAlreadyTracked = state.calibration.signals.some((signal) => signal.setupKey === setupKey);
@@ -1790,7 +2199,7 @@
       time: latest.time,
       side,
       strike,
-      setup: pressureRead.state,
+      setup: structureRead.decision,
       response: premiumResponse(side, strike, 300),
       spot: latest.spot,
       optionLtp: option.ltp,
@@ -1801,7 +2210,7 @@
       quoteSource: option.ask && option.bid ? "bid-ask" : "ltp-fallback",
       atmIv: latest.atmIv,
       atmStraddle: latest.atmStraddle,
-      reason: pressureRead.note,
+      reason: structureRead.note,
       checks: {
         "180": null,
         "300": null,
@@ -1809,7 +2218,7 @@
       },
       result: "Pending"
     });
-    state.calibration.lastActionState = pressureRead.state;
+    state.calibration.lastActionState = structureRead.decision;
     state.calibration.signals = state.calibration.signals.slice(0, 100);
   }
 
@@ -1971,7 +2380,7 @@
         <td>${formatTime(signal.time)}</td>
         <td>${escapeHtml(signal.side)}</td>
         <td>${price(signal.strike, 0)}</td>
-        <td>${escapeHtml(signal.setup || "Pressure trigger")}</td>
+        <td>${escapeHtml(signal.setup || "Structure trigger")}</td>
         <td>${outcomeCell(signal.checks["180"])}</td>
         <td>${outcomeCell(signal.checks["300"])}</td>
         <td>${outcomeCell(signal.checks["600"])}</td>

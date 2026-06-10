@@ -58,25 +58,24 @@
         </section>
 
         <section class="dashboard-grid">
-          <article class="panel span-2 pressure-card" id="spotPressureCard">
-            <div class="pressure-heading">
+          <article class="panel span-2 structure-card" id="marketStructureCard">
+            <div class="structure-heading">
               <div>
-                <p class="eyebrow">5M Spot Pressure</p>
-                <h2 id="pressureHeadline">Building completed 5-minute candle history</h2>
-                <p id="pressureContext">Only completed 5-minute candles are used for confirmation.</p>
+                <p class="eyebrow">Market Structure Intelligence</p>
+                <h2 id="structureHeadline">Building opening inventory and stable OI walls</h2>
+                <p id="structureOrigin">Session origin will appear after the 09:15–09:20 median baseline.</p>
               </div>
-              <span class="pressure-state building" id="pressureState">BUILDING</span>
+              <span class="structure-state building" id="structureState">BUILDING</span>
             </div>
-            <div class="pressure-metrics">
-              <div><span>PE Pressure</span><strong id="pressurePeState">--</strong></div>
-              <div><span>PE OI Change</span><strong id="pressurePeOi">--</strong></div>
-              <div><span>PE Premium</span><strong id="pressurePePremium">--</strong></div>
-              <div><span>ATM Confirmation</span><strong id="pressureAtmResponse">--</strong></div>
+            <div class="structure-location" id="structureLocation">
+              <span>Spot --</span><span>Support --</span><span>Resistance --</span><span>Range --</span>
             </div>
-            <div class="pressure-levels">
-              <span>Trigger <strong id="pressureTrigger">--</strong></span>
-              <span>Invalid below <strong id="pressureInvalidation">--</strong></span>
-              <span id="pressureCandleNote">Forming candle is not confirmation</span>
+            <div class="structure-table" id="structureTable"></div>
+            <div class="structure-evidence" id="structureEvidence"></div>
+            <div class="structure-footer">
+              <strong id="structureDecision">DATA BUILDING</strong>
+              <span id="structureLevels">Trigger building · invalidation building</span>
+              <span id="structureStability">Completed 5m confirmation pending</span>
             </div>
           </article>
 
@@ -154,7 +153,7 @@
             <summary>
               <div>
                 <p class="eyebrow">Outcome Tracker</p>
-                <h2>Exact 3m, 5m, and 10m snapshots after each pressure trigger</h2>
+                <h2>Exact 3m, 5m, and 10m snapshots after each stable structure trigger</h2>
               </div>
               <span aria-hidden="true"></span>
             </summary>
@@ -187,24 +186,24 @@
             </summary>
             <div class="formula-grid">
               <div>
-                <strong>5m Floor</strong>
-                <code>recent 3-6 completed candles only</code>
-                <code>minimum two defended tests inside the floor zone</code>
+                <strong>Opening Baseline</strong>
+                <code>median OI, premium mid, delta, and spot from valid 09:15-09:20 snapshots</code>
+                <code>all later Open changes are current minus that median</code>
               </div>
               <div>
-                <strong>PE Confirmation</strong>
-                <code>ATM + one lower strike PE OI must rise</code>
-                <code>PE premium must fall beyond statistical noise</code>
+                <strong>Stable OI Walls</strong>
+                <code>support = strongest PE strike + next lower PE cluster</code>
+                <code>CE wall uses next higher CE; near zone = strike ± half interval; median + deviation required</code>
               </div>
               <div>
-                <strong>Sweep</strong>
-                <code>5m low below zone + completed close back above floor</code>
-                <code>single wick never becomes a confirmed breakdown</code>
+                <strong>Actual Changes</strong>
+                <code>5m/15m/30m = current value minus exact historical snapshot</code>
+                <code>missing history always displays Building; values are never estimated</code>
               </div>
               <div>
-                <strong>Breakdown</strong>
-                <code>two completed 5m closes below invalidation</code>
-                <code>PE premium strength must confirm downside pressure</code>
+                <strong>Premium Confirmation</strong>
+                <code>mid = valid bid/ask midpoint, otherwise LTP fallback</code>
+                <code>side residual removes starting-delta move and common CE/PE volatility effect</code>
               </div>
             </div>
           </details>

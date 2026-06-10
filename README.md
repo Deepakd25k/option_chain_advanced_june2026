@@ -4,8 +4,9 @@ Formula-backed intraday option-chain dashboard for Indian index option buyers. I
 
 ## Current Trading Surface
 
-- 5M Spot Pressure: exact completed Upstox 5-minute OHLC candles detect a defended floor, sweep reclaim, trigger, and two-close breakdown.
-- PE confirmation: same-time database snapshots compare ATM and one-lower-strike PE OI plus premium behaviour against statistical noise.
+- Market Structure Intelligence: one dynamic card detects opening location, stable PE/CE OI walls, micro-ranges, support/resistance tests, and directional inventory pressure.
+- Support, ATM, and resistance contracts show current OI/mid plus actual Open, 5m, 15m, and 30m OI and premium changes.
+- Premium confirmation uses bid/ask midpoint, starting-delta adjustment, and common CE/PE volatility removal instead of raw LTP direction alone.
 - Auto expiry fetch from Upstox option contracts; nearest expiry is selected automatically.
 - Index selector includes NIFTY50, BANKNIFTY, FINNIFTY, and SENSEX.
 - ATM Flow Matrix: Open, 5m, 10m, 15m, and 30m CE/PE OI plus premium behaviour.
@@ -67,12 +68,12 @@ DATABASE_URL
 
 No manual migration is required. The first server request creates `market_snapshots` automatically; the same SQL is also available in `db/schema.sql`.
 
-During the 09:15-15:30 IST weekday session, every successful live option-chain request is saved in a 30-second idempotent bucket. On page load the dashboard restores today's first snapshot plus the latest 240 snapshots.
+During the 09:15-15:30 IST weekday session, every successful live option-chain request is saved in a 30-second idempotent bucket. On page load the dashboard restores the opening snapshots plus the latest 240 snapshots.
 
 Window rules are fixed:
 
 ```text
-Open = current value - first saved value of today's session
+Open = current value - 09:15-09:20 opening median
 5m   = current value - closest snapshot around current time minus 5 minutes
 15m  = current value - closest snapshot around current time minus 15 minutes
 30m  = current value - closest snapshot around current time minus 30 minutes
@@ -108,11 +109,11 @@ Vercel serverless functions are good for REST snapshots and polling. They are no
 
 ## Calibration
 
-The Calibration Lab v2 runs automatically while the dashboard is open:
+The Calibration Lab v3 runs automatically while the dashboard is open:
 
 - records unique live snapshots every 30 seconds only from 09:15-15:30 IST
-- rejects unchanged/stale payloads and resets older v1 browser data
-- tracks only `UPSIDE TRIGGERED` and `BREAKDOWN CONFIRMED` pressure transitions
+- rejects unchanged/stale payloads and resets older calibration schemas
+- tracks only stable directional Market Structure Intelligence states after two completed 5m confirmations
 - permits one independent signal per setup with a five-minute global cooldown
 - checks the nearest stored snapshot at exactly 3 minutes, 5 minutes, and 10 minutes
 - evaluates an option buyer from entry ask to exit bid, with minimum-move, MFE, and MAE fields

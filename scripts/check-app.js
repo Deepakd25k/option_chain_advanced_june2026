@@ -23,7 +23,7 @@ if (missing.length) {
 }
 
 const html = fs.readFileSync(path.resolve(__dirname, "..", "index.html"), "utf8");
-for (const id of ["spotPressureCard", "pressureHeadline", "matrixTable", "atmFlowTable", "outcomeTable"]) {
+for (const id of ["marketStructureCard", "structureHeadline", "structureTable", "structureEvidence", "matrixTable", "atmFlowTable", "outcomeTable"]) {
   if (!html.includes(`id="${id}"`)) {
     console.error(`Missing DOM id: ${id}`);
     process.exit(1);
@@ -32,10 +32,15 @@ for (const id of ["spotPressureCard", "pressureHeadline", "matrixTable", "atmFlo
 
 const app = fs.readFileSync(path.resolve(__dirname, "..", "src/app.js"), "utf8");
 const calibrationGuards = [
-  "const CALIBRATION_VERSION = 2",
+  "const CALIBRATION_VERSION = 3",
   "latest.source !== \"live\"",
   "isMarketSessionIst(latest.time)",
-  "createPressureCalibrationSignal(pressureRead, latest)",
+  "createStructureCalibrationSignal(structureRead, latest)",
+  "buildMarketStructureRead(latest)",
+  "openingBaselineSnapshots(latest)",
+  "buildStructureWindow(latest, openingSnapshots",
+  "supportAdding && resistanceWithdrawing",
+  "resistanceAdding && supportWithdrawing",
   "setupAlreadyTracked",
   "findOutcomeSnapshot(targetTime)",
   "snapshot.source === \"live\"",

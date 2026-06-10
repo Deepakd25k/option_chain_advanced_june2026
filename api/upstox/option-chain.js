@@ -1,7 +1,10 @@
 const UPSTOX_OPTION_CHAIN_URL = "https://api.upstox.com/v2/option/chain";
 const UPSTOX_OPTION_CONTRACT_URL = "https://api.upstox.com/v2/option/contract";
 const UPSTOX_INTRADAY_CANDLE_URL = "https://api.upstox.com/v3/historical-candle/intraday";
+const UPSTOX_HISTORICAL_CANDLE_URL = "https://api.upstox.com/v3/historical-candle";
 const { saveMarketSnapshot } = require("../../lib/session-store");
+
+const previousCloseCache = new Map();
 
 module.exports = async function handler(req, res) {
   setJsonHeaders(res);
@@ -41,14 +44,19 @@ async function fetchLivePayload(instrumentKey, requestedExpiry, token) {
   url.searchParams.set("instrument_key", instrumentKey);
   url.searchParams.set("expiry_date", expiryDate);
 
-  const [response, candles5m] = await Promise.all([
+  const [response, candles5m, previousClose] = await Promise.all([
     fetch(url, { headers: upstoxHeaders(token) }),
-    fetchIntradayCandles(instrumentKey, token).catch(() => [])
+    fetchIntradayCandles(instrumentKey, token).catch(() => []),
+    fetchPreviousSessionClose(instrumentKey, token).catch(() => 0)
   ]);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(payload.message || payload.error || "Upstox option-chain request failed");
   }
+
+  const underlying = inferUnderlying(payload.data || []);
+  underlying.dayOpen = inferDayOpen(candles5m, underlying.spot);
+  underlying.previousClose = previousClose;
 
   return {
     source: "live",
@@ -56,10 +64,43 @@ async function fetchLivePayload(instrumentKey, requestedExpiry, token) {
     instrumentKey,
     expiry: expiryDate,
     availableExpiries: [],
-    underlying: inferUnderlying(payload.data || []),
+    underlying,
     candles5m,
     data: payload.data || []
   };
+}
+
+async function fetchPreviousSessionClose(instrumentKey, token) {
+  const today = istDateParts(new Date());
+  const cacheKey = `${instrumentKey}:${dateString(today)}`;
+  const cached = previousCloseCache.get(cacheKey);
+  if (cached) return cached;
+
+  const todayUtc = Date.UTC(today.year, today.month - 1, today.day);
+  const toDate = new Date(todayUtc - 24 * 60 * 60 * 1000);
+  const fromDate = new Date(todayUtc - 12 * 24 * 60 * 60 * 1000);
+  const url = `${UPSTOX_HISTORICAL_CANDLE_URL}/${encodeURIComponent(instrumentKey)}/days/1/${isoDate(toDate)}/${isoDate(fromDate)}`;
+  const response = await fetch(url, { headers: upstoxHeaders(token) });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.message || payload.error || "Unable to fetch previous session close");
+  }
+  const candles = payload.data && Array.isArray(payload.data.candles) ? payload.data.candles : [];
+  const close = candles
+    .map((candle) => ({ time: new Date(candle[0]).getTime(), close: number(candle[4]) }))
+    .filter((candle) => Number.isFinite(candle.time) && candle.close > 0)
+    .sort((a, b) => b.time - a.time)[0];
+  const value = close ? close.close : 0;
+  if (value) previousCloseCache.set(cacheKey, value);
+  return value;
+}
+
+function inferDayOpen(candles, fallbackSpot) {
+  const first = (Array.isArray(candles) ? candles : [])
+    .map((candle) => ({ time: new Date(candle[0]).getTime(), open: number(candle[1]) }))
+    .filter((candle) => Number.isFinite(candle.time) && candle.open > 0)
+    .sort((a, b) => a.time - b.time)[0];
+  return first ? first.open : fallbackSpot;
 }
 
 async function fetchIntradayCandles(instrumentKey, token) {
@@ -128,7 +169,8 @@ function inferUnderlying(rows) {
     : 0;
   return {
     spot,
-    dayOpen: 0
+    dayOpen: 0,
+    previousClose: 0
   };
 }
 
@@ -181,10 +223,36 @@ function makeDemoPayload(instrumentKey, expiryDate) {
     availableExpiries: demoExpiries(),
     underlying: {
       spot: round(spot),
-      dayOpen: round(dayOpen)
+      dayOpen: round(dayOpen),
+      previousClose: round(base - 20)
     },
     data: rows
   };
+}
+
+function istDateParts(date) {
+  const values = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date).reduce((result, part) => {
+    result[part.type] = part.value;
+    return result;
+  }, {});
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day)
+  };
+}
+
+function dateString(parts) {
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+function isoDate(date) {
+  return date.toISOString().slice(0, 10);
 }
 
 function demoExpiries() {
