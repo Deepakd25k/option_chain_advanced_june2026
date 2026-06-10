@@ -304,6 +304,54 @@ input {
   font-size: 1.05rem;
 }
 
+.pre-signal-line {
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--violet);
+  border-radius: var(--radius);
+  display: grid;
+  gap: 7px;
+  grid-template-columns: auto auto 1fr;
+  margin-top: 10px;
+  padding: 11px 12px;
+}
+
+.pre-signal-line.positive {
+  border-left-color: var(--green);
+}
+
+.pre-signal-line.negative {
+  border-left-color: var(--rose);
+}
+
+.pre-signal-line.muted {
+  border-left-color: var(--violet);
+}
+
+.pre-signal-line span,
+.pre-signal-line em {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.pre-signal-line span {
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.pre-signal-line strong {
+  white-space: nowrap;
+}
+
+.pre-signal-line em {
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .atm-flow-card {
   background:
     linear-gradient(180deg, rgba(47, 191, 155, 0.05), transparent 38%),
@@ -943,6 +991,14 @@ td {
   .decision-metrics,
   .compact-grid {
     grid-template-columns: 1fr;
+  }
+
+  .pre-signal-line {
+    grid-template-columns: 1fr;
+  }
+
+  .pre-signal-line em {
+    white-space: normal;
   }
 
   h1 {

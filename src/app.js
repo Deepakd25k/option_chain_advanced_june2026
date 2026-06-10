@@ -42,7 +42,7 @@
       "stabilityPill", "marketState", "premiumMode", "bestSide",
       "confidenceScore", "decisionReasons", "moveLeftLabel", "spotPill",
       "moveMeter", "moveUsedText", "straddleText", "atmStrike", "atmIv",
-      "atmStraddle", "pcrValue", "matrixTable", "strikeFinder",
+      "atmStraddle", "pcrValue", "preSignalLine", "matrixTable", "strikeFinder",
       "atmFlowRange", "atmFlowSummaryChips", "atmFlowTable",
       "straddleChart", "ivChart", "pcrChart", "straddleDelta", "ivDelta",
       "pcrDelta", "eventGrid", "advancedEdgeGrid", "strikeFlowGrid", "signalJournal",
@@ -565,6 +565,7 @@
         summary: summarizeAtmFlow(flowRows)
       };
     });
+    renderPreSignalLine(models);
 
     el.atmFlowSummaryChips.innerHTML = models.map((model) => `
       <div class="atm-flow-chip ${model.summary.tone}" title="${escapeHtml(model.summary.reason)}">
@@ -584,6 +585,68 @@
       </tr>
     `;
     }).join("");
+  }
+
+  function renderPreSignalLine(models) {
+    const preSignal = buildPreSignalRead(models);
+    el.preSignalLine.className = `pre-signal-line ${preSignal.tone}`;
+    el.preSignalLine.innerHTML = `
+      <span>Pre-Signal</span>
+      <strong>${escapeHtml(preSignal.state)} · ${preSignal.confidence}%</strong>
+      <em>${escapeHtml(preSignal.agreement)} · ${escapeHtml(preSignal.reason)} · ${escapeHtml(preSignal.trigger)}</em>
+    `;
+  }
+
+  function buildPreSignalRead(models) {
+    const scored = models.map((model) => ({
+      label: model.label,
+      direction: model.summary.bias,
+      score: model.summary.score,
+      reason: model.summary.reason
+    }));
+    const bullish = scored.filter((item) => item.direction === "Bullish").length;
+    const bearish = scored.filter((item) => item.direction === "Bearish").length;
+    const mixed = scored.length - bullish - bearish;
+    const totalScore = sum(scored, (item) => item.score);
+    const dominant = bullish > bearish ? "Bullish" : bearish > bullish ? "Bearish" : "Mixed";
+    const dominantCount = Math.max(bullish, bearish);
+    const agreement = dominant === "Mixed"
+      ? `${mixed}/${scored.length} mixed`
+      : `${dominantCount}/${scored.length} ${dominant.toLowerCase()}`;
+    const confidence = clamp(Math.round((dominantCount / scored.length) * 60 + Math.min(Math.abs(totalScore), 18) * 2), 0, 95);
+    const latest = scored.find((item) => item.label === "5m") || scored[0];
+    const reason = latest ? latest.reason : "flow building";
+
+    if (dominant === "Bullish" && dominantCount >= 3) {
+      return {
+        state: "Bullish Build",
+        confidence,
+        agreement,
+        reason,
+        trigger: "Trigger: CE response + price hold",
+        tone: "positive"
+      };
+    }
+
+    if (dominant === "Bearish" && dominantCount >= 3) {
+      return {
+        state: "Bearish Build",
+        confidence,
+        agreement,
+        reason,
+        trigger: "Trigger: PE response + support break",
+        tone: "negative"
+      };
+    }
+
+    return {
+      state: "Mixed / Wait",
+      confidence,
+      agreement,
+      reason,
+      trigger: "Trigger: wait for flow alignment",
+      tone: "muted"
+    };
   }
 
   function updateAtmFlowRangeButtons() {
@@ -690,6 +753,7 @@
         title: "ATM Flow: Bullish support build",
         tone: "positive",
         bias: "Bullish",
+        score,
         reason: `${peReason}; ${ceReason}`,
         ceOiTotal,
         peOiTotal,
@@ -703,6 +767,7 @@
         title: "ATM Flow: Resistance / bearish pressure",
         tone: "negative",
         bias: "Bearish",
+        score,
         reason: `${ceReason}; ${peReason}`,
         ceOiTotal,
         peOiTotal,
@@ -715,6 +780,7 @@
       title: "ATM Flow: Mixed / wait",
       tone: "muted",
       bias: "Mixed",
+      score,
       reason: `${ceReason}; ${peReason}`,
       ceOiTotal,
       peOiTotal,
