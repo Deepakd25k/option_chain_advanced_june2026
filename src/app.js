@@ -12,7 +12,6 @@
     history: [],
     paused: false,
     timer: null,
-    atmFlowWindow: localStorage.getItem("atm_flow_window") || "open",
     stable: {
       key: null,
       since: null,
@@ -43,7 +42,7 @@
       "confidenceScore", "decisionReasons", "moveLeftLabel", "spotPill",
       "moveMeter", "moveUsedText", "straddleText", "atmStrike", "atmIv",
       "atmStraddle", "pcrValue", "matrixTable", "strikeFinder",
-      "atmFlowWindow", "atmFlowSummary", "atmFlowTotals", "atmFlowTable",
+      "atmFlowSummaryChips", "atmFlowTable",
       "straddleChart", "ivChart", "pcrChart", "straddleDelta", "ivDelta",
       "pcrDelta", "eventGrid", "advancedEdgeGrid", "strikeFlowGrid", "signalJournal",
       "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable", "chainTable"
@@ -62,15 +61,6 @@
   function bindEvents() {
     el.refreshButton.addEventListener("click", refresh);
     el.pauseButton.addEventListener("click", togglePause);
-    el.atmFlowWindow.addEventListener("click", (event) => {
-      const button = event.target.closest("button[data-window]");
-      if (!button) return;
-      state.atmFlowWindow = button.dataset.window;
-      localStorage.setItem("atm_flow_window", state.atmFlowWindow);
-      updateAtmFlowButtons();
-      const latest = lastSnapshot();
-      if (latest) renderAtmFlowWatch(latest);
-    });
     el.exportCalibration.addEventListener("click", exportCalibration);
     el.clearCalibration.addEventListener("click", clearCalibration);
     el.symbolSelect.addEventListener("change", async () => {
@@ -549,42 +539,65 @@
   }
 
   function renderAtmFlowWatch(latest) {
-    updateAtmFlowButtons();
-    const seconds = state.atmFlowWindow === "open" ? null : Number(state.atmFlowWindow);
-    const older = getOlderSnapshot(seconds);
     const atmIndex = latest.rows.findIndex((row) => row.strike === latest.atmStrike);
     const start = Math.max(0, atmIndex - 3);
     const rows = latest.rows.slice(start, start + 7);
-    const flowRows = rows.map((row) => buildAtmFlowRow(latest, older, row));
-    const summary = summarizeAtmFlow(flowRows);
+    const windows = atmFlowWindows();
+    const models = windows.map((windowItem) => {
+      const older = getOlderSnapshot(windowItem.seconds);
+      const flowRows = rows.map((row) => buildAtmFlowRow(latest, older, row));
+      return {
+        ...windowItem,
+        rows: flowRows,
+        summary: summarizeAtmFlow(flowRows)
+      };
+    });
 
-    el.atmFlowSummary.textContent = summary.title;
-    el.atmFlowSummary.className = summary.tone;
-    el.atmFlowTotals.innerHTML = `
-      <div><span>CE Total</span><strong>${compact(summary.ceOiTotal)}</strong><em>${signed(summary.cePremTotal)} prem</em></div>
-      <div><span>PE Total</span><strong>${compact(summary.peOiTotal)}</strong><em>${signed(summary.pePremTotal)} prem</em></div>
-      <div><span>Overall</span><strong>${escapeHtml(summary.bias)}</strong><em>${escapeHtml(summary.reason)}</em></div>
-    `;
+    el.atmFlowSummaryChips.innerHTML = models.map((model) => `
+      <div class="atm-flow-chip ${model.summary.tone}" title="${escapeHtml(model.summary.reason)}">
+        <span>${model.label}</span>
+        <strong>${escapeHtml(model.summary.bias)}</strong>
+        <em>CE ${compact(model.summary.ceOiTotal)} / PE ${compact(model.summary.peOiTotal)}</em>
+      </div>
+    `).join("");
 
     const tbody = el.atmFlowTable.querySelector("tbody");
-    tbody.innerHTML = flowRows.map((item) => `
-      <tr class="${item.isAtm ? "atm-row" : ""}">
-        <td>${compact(item.ce.oiChange)}</td>
-        <td>${changeCell(item.ce.priceChange)}</td>
-        <td>${flowBadge(item.ce)}</td>
-        <td class="strike-cell"><strong>${price(item.strike, 0)}</strong>${item.isAtm ? '<span class="atm-badge">ATM</span>' : ""}</td>
-        <td>${flowBadge(item.pe)}</td>
-        <td>${changeCell(item.pe.priceChange)}</td>
-        <td>${compact(item.pe.oiChange)}</td>
+    tbody.innerHTML = rows.map((row, index) => {
+      const isAtm = row.strike === latest.atmStrike;
+      return `
+      <tr class="${isAtm ? "atm-row" : ""}">
+        <td class="strike-cell"><strong>${price(row.strike, 0)}</strong>${isAtm ? '<span class="atm-badge">ATM</span>' : ""}</td>
+        ${models.map((model) => atmFlowCell(model.rows[index])).join("")}
       </tr>
-    `).join("");
+    `;
+    }).join("");
   }
 
-  function updateAtmFlowButtons() {
-    const buttons = el.atmFlowWindow.querySelectorAll("button[data-window]");
-    buttons.forEach((button) => {
-      button.classList.toggle("active", button.dataset.window === state.atmFlowWindow);
-    });
+  function atmFlowWindows() {
+    return [
+      { key: "open", label: "Open", seconds: null },
+      { key: "300", label: "5m", seconds: 300 },
+      { key: "600", label: "10m", seconds: 600 },
+      { key: "900", label: "15m", seconds: 900 },
+      { key: "1800", label: "30m", seconds: 1800 }
+    ];
+  }
+
+  function atmFlowCell(item) {
+    return `
+      <td class="atm-flow-cell">
+        <div class="flow-line ${item.ce.tone}">
+          <span>CE ${flowCode(item.ce)}</span>
+          <strong>${compact(item.ce.oiChange)}</strong>
+          <em>${signed(item.ce.priceChange)}</em>
+        </div>
+        <div class="flow-line ${item.pe.tone}">
+          <span>PE ${flowCode(item.pe)}</span>
+          <strong>${compact(item.pe.oiChange)}</strong>
+          <em>${signed(item.pe.priceChange)}</em>
+        </div>
+      </td>
+    `;
   }
 
   function buildAtmFlowRow(latest, older, row) {
@@ -705,6 +718,16 @@
     if (title.includes("short covering")) return "Covering";
     if (title.includes("long unwinding")) return "Unwind";
     return "Neutral";
+  }
+
+  function flowCode(flow) {
+    if (flow.shortTitle === "Long build") return "LB";
+    if (flow.shortTitle === "Covering") return "C";
+    if (flow.shortTitle === "Writing") return "W";
+    if (flow.shortTitle === "Unwind") return "U";
+    if (flow.shortTitle === "Noise") return "N";
+    if (flow.shortTitle === "Build") return "…";
+    return "N";
   }
 
   function countFlowTitles(flows) {
