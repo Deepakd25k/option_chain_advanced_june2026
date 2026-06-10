@@ -108,15 +108,19 @@ Vercel serverless functions are good for REST snapshots and polling. They are no
 
 ## Calibration
 
-The Calibration Lab runs automatically while the dashboard is open:
+The Calibration Lab v2 runs automatically while the dashboard is open:
 
-- records session snapshots in browser `localStorage`
-- tracks new CE/PE decision signals
-- checks outcomes after 3 minutes, 5 minutes, and 10 minutes
-- suggests a premium-response threshold from completed samples
+- records unique live snapshots every 30 seconds only from 09:15-15:30 IST
+- rejects unchanged/stale payloads and resets older v1 browser data
+- tracks only `UPSIDE TRIGGERED` and `BREAKDOWN CONFIRMED` pressure transitions
+- permits one independent signal per setup with a five-minute global cooldown
+- checks the nearest stored snapshot at exactly 3 minutes, 5 minutes, and 10 minutes
+- evaluates an option buyer from entry ask to exit bid, with minimum-move, MFE, and MAE fields
+- waits for all three checks before assigning Good, Mixed, or False
+- requires 20 independent completed signals before suggesting a response threshold
 - exports the full session as a JSON report with **Export Today's Calibration**
 
-It does not auto-change trading thresholds. Suggestions are shown for review so real-money logic stays under manual control.
+It does not auto-change trading thresholds. Statutory charges are not modeled; the bid-ask adjustment and minimum-net-move gate provide an execution buffer, not a brokerage statement.
 
 ## Strike Flow Classification
 

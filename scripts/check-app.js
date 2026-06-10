@@ -30,4 +30,25 @@ for (const id of ["spotPressureCard", "pressureHeadline", "matrixTable", "atmFlo
   }
 }
 
+const app = fs.readFileSync(path.resolve(__dirname, "..", "src/app.js"), "utf8");
+const calibrationGuards = [
+  "const CALIBRATION_VERSION = 2",
+  "latest.source !== \"live\"",
+  "isMarketSessionIst(latest.time)",
+  "createPressureCalibrationSignal(pressureRead, latest)",
+  "setupAlreadyTracked",
+  "findOutcomeSnapshot(targetTime)",
+  "snapshot.source === \"live\"",
+  "exitBid - signal.entryAsk",
+  "checks.length < 3",
+  "completed.length < 20"
+];
+
+for (const guard of calibrationGuards) {
+  if (!app.includes(guard)) {
+    console.error(`Missing calibration v2 guard: ${guard}`);
+    process.exit(1);
+  }
+}
+
 console.log("App structure check passed.");

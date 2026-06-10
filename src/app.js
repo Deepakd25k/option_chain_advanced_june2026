@@ -7,6 +7,10 @@
     { key: "1800", label: "30m", seconds: 1800 },
     { key: "open", label: "Open", seconds: null }
   ];
+  const CALIBRATION_VERSION = 2;
+  const CALIBRATION_INTERVAL_MS = 30 * 1000;
+  const SIGNAL_COOLDOWN_MS = 5 * 60 * 1000;
+  const OUTCOME_TOLERANCE_MS = 45 * 1000;
 
   const state = {
     history: [],
@@ -20,7 +24,7 @@
       confirmations: 0
     },
     signalStartSnapshot: null,
-    journal: [],
+    pressureRead: null,
     calibration: loadCalibrationState(),
     recorder: {
       configured: null,
@@ -110,7 +114,6 @@
     state.candles5m = [];
     state.stable = { key: null, since: null, confirmations: 0 };
     state.signalStartSnapshot = null;
-    state.journal = [];
     state.recorder.snapshotCount = 0;
     state.recorder.firstSavedAt = null;
     state.recorder.lastSavedAt = null;
@@ -413,12 +416,15 @@
     const latest = lastSnapshot();
     if (!latest) return;
     const active = getWindowMetrics(el.activeWindow.value);
-    const decision = buildDecision(latest, active);
-    recordCalibrationSnapshot(latest, active, decision);
-    updateSignalJournal(decision, latest, active);
-    updateSignalOutcomes(latest);
+    const pressureRead = buildFiveMinutePressure(latest);
+    state.pressureRead = pressureRead;
+    const calibrationSnapshotAdded = recordCalibrationSnapshot(latest, active, pressureRead);
+    if (calibrationSnapshotAdded) {
+      createPressureCalibrationSignal(pressureRead, latest);
+      updateSignalOutcomes(latest);
+    }
     saveCalibrationState();
-    renderSpotPressure(latest);
+    renderSpotPressure(latest, pressureRead);
     renderAtmFlowWatch(latest);
     renderMatrix();
     renderCalibrationLab();
@@ -594,8 +600,8 @@
     return items;
   }
 
-  function renderSpotPressure(latest) {
-    const read = buildFiveMinutePressure(latest);
+  function renderSpotPressure(latest, pressureRead) {
+    const read = pressureRead || buildFiveMinutePressure(latest);
     el.spotPressureCard.dataset.tone = read.tone;
     el.pressureHeadline.textContent = read.headline;
     el.pressureContext.textContent = read.context;
@@ -1590,79 +1596,20 @@
     };
   }
 
-  function updateSignalJournal(decision, latest, active) {
-    const key = `${decision.premiumMode}:${decision.bestSide}:${decision.marketState}`;
-    const lastEntry = state.journal[0];
-    if (lastEntry && lastEntry.key === key) {
-      lastEntry.lastSeen = latest.time;
-      lastEntry.confirmations += 1;
-      lastEntry.confidence = decision.confidence;
-      lastEntry.spot = latest.spot;
-      return;
-    }
-
-    const entry = {
-      key,
-      time: latest.time,
-      lastSeen: latest.time,
-      signal: decision.premiumMode,
-      side: decision.bestSide,
-      marketState: decision.marketState,
-      confidence: decision.confidence,
-      spot: latest.spot,
-      reason: decision.reasons[0] ? decision.reasons[0].text : "Signal state changed",
-      spotChange: active.spotChange,
-      confirmations: 1
-    };
-    state.journal.unshift(entry);
-    state.journal = state.journal.slice(0, 20);
-    createCalibrationSignal(entry, decision, latest, active);
-  }
-
-  function readJournalQuality() {
-    if (!state.journal.length) {
-      return {
-        title: "Building",
-        tone: "neutral",
-        copy: "Signal journal starts once the first decision state is created.",
-        facts: ["No entries yet"]
-      };
-    }
-
-    const latest = state.journal[0];
-    const stable = latest.confirmations >= 3;
-    const noTradeCount = state.journal.filter((entry) => entry.side === "No fresh buy").length;
-    return {
-      title: stable ? "Signal stable" : "Signal building",
-      tone: stable ? "good" : "warn",
-      copy: "Use this journal to replay how the dashboard changed its read during the session.",
-      facts: [
-        `${state.journal.length} state changes`,
-        `${latest.confirmations} confirmations`,
-        `${noTradeCount} no-trade reads`
-      ]
-    };
-  }
-
-  function renderSignalJournal() {
-    const tbody = el.signalJournal.querySelector("tbody");
-    tbody.innerHTML = state.journal.slice(0, 12).map((entry) => `
-      <tr>
-        <td>${formatTime(entry.time)}</td>
-        <td>${escapeHtml(entry.signal)}</td>
-        <td>${escapeHtml(entry.side)}</td>
-        <td>${entry.confidence}%</td>
-        <td>${price(entry.spot)}</td>
-        <td>${escapeHtml(entry.reason)}</td>
-      </tr>
-    `).join("");
-  }
-
   function freshCalibrationState() {
     return {
-      sessionDate: new Date().toISOString().slice(0, 10),
+      version: CALIBRATION_VERSION,
+      sessionDate: istSessionDate(Date.now()),
       snapshots: [],
-      signals: []
+      signals: [],
+      lastActionState: null,
+      ignored: {
+        nonLive: 0,
+        outsideSession: 0,
+        stale: 0,
+        cooldown: 0,
+        nonActionable: 0
+      }
     };
   }
 
@@ -1671,13 +1618,22 @@
       const raw = localStorage.getItem("option_cockpit_calibration");
       if (!raw) return freshCalibrationState();
       const parsed = JSON.parse(raw);
-      if (!parsed || parsed.sessionDate !== new Date().toISOString().slice(0, 10)) {
+      if (!parsed || parsed.version !== CALIBRATION_VERSION || parsed.sessionDate !== istSessionDate(Date.now())) {
         return freshCalibrationState();
       }
       return {
+        version: CALIBRATION_VERSION,
         sessionDate: parsed.sessionDate,
         snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots : [],
-        signals: Array.isArray(parsed.signals) ? parsed.signals : []
+        signals: Array.isArray(parsed.signals) ? parsed.signals : [],
+        lastActionState: parsed.lastActionState || null,
+        ignored: {
+          nonLive: number(parsed.ignored && parsed.ignored.nonLive),
+          outsideSession: number(parsed.ignored && parsed.ignored.outsideSession),
+          stale: number(parsed.ignored && parsed.ignored.stale),
+          cooldown: number(parsed.ignored && parsed.ignored.cooldown),
+          nonActionable: number(parsed.ignored && parsed.ignored.nonActionable)
+        }
       };
     } catch (error) {
       return freshCalibrationState();
@@ -1688,14 +1644,13 @@
     try {
       localStorage.setItem("option_cockpit_calibration", JSON.stringify(state.calibration));
     } catch (error) {
-      state.calibration.snapshots = state.calibration.snapshots.slice(-120);
-      state.calibration.signals = state.calibration.signals.slice(0, 40);
+      state.calibration.snapshots = state.calibration.snapshots.slice(-300);
+      state.calibration.signals = state.calibration.signals.slice(0, 50);
     }
   }
 
   function clearCalibration() {
     state.calibration = freshCalibrationState();
-    state.journal = [];
     saveCalibrationState();
     renderCalibrationLab();
     renderOutcomeTable();
@@ -1724,7 +1679,7 @@
     const responseSuggestion = suggestResponseThreshold(completed);
     return {
       app: "Option Buyer Cockpit",
-      version: "calibration-v1",
+      version: "calibration-v2",
       exportedAt: new Date().toISOString(),
       sessionDate: state.calibration.sessionDate,
       instrumentKey: el.symbolSelect.value,
@@ -1739,22 +1694,38 @@
         falseSignals,
         hitRate,
         suggestedResponseGate: responseSuggestion.value,
-        suggestionNote: responseSuggestion.copy
+        suggestionNote: responseSuggestion.copy,
+        ignored: state.calibration.ignored
       },
       signals: state.calibration.signals,
-      snapshots: state.calibration.snapshots,
-      journal: state.journal
+      snapshots: state.calibration.snapshots
     };
   }
 
-  function recordCalibrationSnapshot(latest, active, decision) {
+  function recordCalibrationSnapshot(latest, active, pressureRead) {
+    if (latest.source !== "live") {
+      state.calibration.ignored.nonLive += 1;
+      return false;
+    }
+    if (!isMarketSessionIst(latest.time)) {
+      state.calibration.ignored.outsideSession += 1;
+      return false;
+    }
+
     const lastRecorded = state.calibration.snapshots[state.calibration.snapshots.length - 1];
-    if (lastRecorded && latest.time - lastRecorded.time < 9000) {
-      return;
+    if (lastRecorded && latest.time - lastRecorded.time < CALIBRATION_INTERVAL_MS) {
+      return false;
+    }
+
+    const fingerprint = calibrationFingerprint(latest);
+    if (lastRecorded && lastRecorded.fingerprint === fingerprint) {
+      state.calibration.ignored.stale += 1;
+      return false;
     }
 
     state.calibration.snapshots.push({
       time: latest.time,
+      fingerprint,
       spot: latest.spot,
       atmStrike: latest.atmStrike,
       atmStraddle: latest.atmStraddle,
@@ -1764,41 +1735,73 @@
       putOi: latest.putOi,
       callWall: latest.walls.callWall ? latest.walls.callWall.strike : null,
       putWall: latest.walls.putWall ? latest.walls.putWall.strike : null,
-      marketState: decision.marketState,
-      premiumMode: decision.premiumMode,
-      bestSide: decision.bestSide,
-      confidence: decision.confidence,
-      bestStrike: decision.best ? decision.best.strike : null,
-      bestResponse: decision.best ? decision.best.response : 0,
+      pressureState: pressureRead.state,
+      pressureTone: pressureRead.tone,
+      pressureTrigger: pressureRead.trigger,
+      pressureInvalidation: pressureRead.invalidation,
+      peOiChange: pressureRead.peOi,
+      pePremiumChange: pressureRead.pePremium,
       spotChange: active.spotChange,
       straddleChange: active.straddleChange,
       ivChange: active.ivChange
     });
-    state.calibration.snapshots = state.calibration.snapshots.slice(-720);
+    state.calibration.snapshots = state.calibration.snapshots.slice(-900);
+    return true;
   }
 
-  function createCalibrationSignal(entry, decision, latest, active) {
-    const tradableSide = decision.bestSide === "CE" || decision.bestSide === "PE";
-    const bestStrike = decision.best && tradableSide ? decision.best.strike : null;
-    const bestRow = bestStrike ? latest.rows.find((row) => row.strike === bestStrike) : null;
-    const bestOption = bestRow ? (decision.bestSide === "CE" ? bestRow.ce : bestRow.pe) : null;
-    const shouldTrack = tradableSide && decision.confidence >= 45 && bestOption;
-    if (!shouldTrack) {
+  function createPressureCalibrationSignal(pressureRead, latest) {
+    const side = pressureRead.state === "UPSIDE TRIGGERED"
+      ? "CE"
+      : pressureRead.state === "BREAKDOWN CONFIRMED"
+        ? "PE"
+        : null;
+    if (!side) {
+      state.calibration.lastActionState = null;
+      state.calibration.ignored.nonActionable += 1;
       return;
     }
 
+    if (state.calibration.lastActionState === pressureRead.state) {
+      state.calibration.ignored.cooldown += 1;
+      return;
+    }
+
+    const setupLevel = side === "CE" ? pressureRead.trigger : pressureRead.invalidation;
+    const setupKey = `${latest.instrumentKey}:${latest.expiry}:${side}:${price(setupLevel, 0)}`;
+    const lastSignal = state.calibration.signals[0];
+    const setupAlreadyTracked = state.calibration.signals.some((signal) => signal.setupKey === setupKey);
+    if (setupAlreadyTracked || (lastSignal && latest.time - lastSignal.time < SIGNAL_COOLDOWN_MS)) {
+      state.calibration.ignored.cooldown += 1;
+      return;
+    }
+
+    const strike = pickCandidateStrike(latest, side);
+    const row = latest.rows.find((item) => item.strike === strike);
+    const option = row ? (side === "CE" ? row.ce : row.pe) : null;
+    if (!option || !option.ltp) return;
+    const entryAsk = option.ask || option.ltp;
+    const entryBid = option.bid || option.ltp;
+    const spread = Math.max(0, entryAsk - entryBid);
+    const minimumNetMove = Math.max(1, entryAsk * 0.01, spread * 1.5);
+
     state.calibration.signals.unshift({
-      id: `${entry.time}:${decision.bestSide}:${bestStrike}`,
-      time: entry.time,
-      side: decision.bestSide,
-      strike: bestStrike,
-      confidence: decision.confidence,
-      response: decision.best.response,
+      id: `${latest.time}:${side}:${strike}`,
+      setupKey,
+      time: latest.time,
+      side,
+      strike,
+      setup: pressureRead.state,
+      response: premiumResponse(side, strike, 300),
       spot: latest.spot,
-      optionLtp: bestOption.ltp,
+      optionLtp: option.ltp,
+      entryBid,
+      entryAsk,
+      spread,
+      minimumNetMove,
+      quoteSource: option.ask && option.bid ? "bid-ask" : "ltp-fallback",
       atmIv: latest.atmIv,
       atmStraddle: latest.atmStraddle,
-      reason: entry.reason,
+      reason: pressureRead.note,
       checks: {
         "180": null,
         "300": null,
@@ -1806,10 +1809,12 @@
       },
       result: "Pending"
     });
-    state.calibration.signals = state.calibration.signals.slice(0, 60);
+    state.calibration.lastActionState = pressureRead.state;
+    state.calibration.signals = state.calibration.signals.slice(0, 100);
   }
 
   function updateSignalOutcomes(latest) {
+    if (!isMarketSessionIst(latest.time)) return;
     for (const signal of state.calibration.signals) {
       for (const seconds of [180, 300, 600]) {
         const key = String(seconds);
@@ -1817,19 +1822,39 @@
           continue;
         }
 
-        const row = latest.rows.find((item) => item.strike === signal.strike);
+        const targetTime = signal.time + seconds * 1000;
+        const outcomeSnapshot = findOutcomeSnapshot(targetTime);
+        if (!outcomeSnapshot) continue;
+        const row = outcomeSnapshot.rows.find((item) => item.strike === signal.strike);
         if (!row) continue;
         const option = signal.side === "CE" ? row.ce : row.pe;
+        const exitBid = option.bid || option.ltp;
         const optionMove = option.ltp - signal.optionLtp;
-        const spotMove = signal.side === "CE" ? latest.spot - signal.spot : signal.spot - latest.spot;
-        const ivMove = latest.atmIv - signal.atmIv;
-        const straddleMove = latest.atmStraddle - signal.atmStraddle;
-        const passed = optionMove > 0 && spotMove > 0;
+        const netOptionMove = exitBid - signal.entryAsk;
+        const spotMove = signal.side === "CE" ? outcomeSnapshot.spot - signal.spot : signal.spot - outcomeSnapshot.spot;
+        const ivMove = outcomeSnapshot.atmIv - signal.atmIv;
+        const straddleMove = outcomeSnapshot.atmStraddle - signal.atmStraddle;
+        const path = state.history.filter((snapshot) => snapshot.time >= signal.time && snapshot.time <= outcomeSnapshot.time)
+          .map((snapshot) => snapshot.rows.find((item) => item.strike === signal.strike))
+          .filter(Boolean)
+          .map((pathRow) => {
+            const pathOption = signal.side === "CE" ? pathRow.ce : pathRow.pe;
+            return (pathOption.bid || pathOption.ltp) - signal.entryAsk;
+          });
+        const mfe = path.length ? Math.max(...path) : netOptionMove;
+        const mae = path.length ? Math.min(...path) : netOptionMove;
+        const passed = netOptionMove >= signal.minimumNetMove && spotMove > 0;
         signal.checks[key] = {
+          targetTime,
+          observedAt: outcomeSnapshot.time,
           optionMove,
+          netOptionMove,
+          exitBid,
           spotMove,
           ivMove,
           straddleMove,
+          mfe,
+          mae,
           passed
         };
       }
@@ -1839,7 +1864,7 @@
 
   function summarizeSignalResult(signal) {
     const checks = Object.values(signal.checks).filter(Boolean);
-    if (!checks.length) return "Pending";
+    if (checks.length < 3) return "Pending";
     const wins = checks.filter((check) => check.passed).length;
     if (wins >= 2) return "Good";
     if (wins === 1) return "Mixed";
@@ -1864,27 +1889,29 @@
     const falseSignals = completed.filter((signal) => signal.result === "False").length;
     const hitRate = completed.length ? good / completed.length : 0;
     const responseSuggestion = suggestResponseThreshold(completed);
-    const avgGoodConfidence = average(completed.filter((signal) => signal.result === "Good").map((signal) => signal.confidence));
-    const avgFalseConfidence = average(completed.filter((signal) => signal.result === "False").map((signal) => signal.confidence));
+    const nonLiveIgnored = state.calibration.ignored.nonLive;
+    const staleIgnored = state.calibration.ignored.stale;
+    const outsideIgnored = state.calibration.ignored.outsideSession;
+    const qualityGood = nonLiveIgnored === 0 && staleIgnored === 0 && outsideIgnored === 0;
 
     return [
       {
         label: "Recorded Snapshots",
         value: String(state.calibration.snapshots.length),
         tone: state.calibration.snapshots.length >= 30 ? "good" : "neutral",
-        copy: "Auto-saved in this browser while the dashboard stays open."
+        copy: "Unique live snapshots, every 30s, only during 09:15-15:30 IST."
       },
       {
-        label: "Tracked Signals",
+        label: "Independent Signals",
         value: String(signals.length),
         tone: signals.length >= 5 ? "good" : "warn",
-        copy: `${completed.length} completed · ${signals.length - completed.length} pending outcome checks.`
+        copy: `${completed.length} completed · ${signals.length - completed.length} pending · 5m cooldown.`
       },
       {
         label: "Signal Hit Rate",
         value: completed.length ? pct(hitRate) : "--",
         tone: hitRate >= 0.6 ? "good" : hitRate >= 0.4 ? "warn" : "bad",
-        copy: `${good} good · ${falseSignals} false after 3m/5m/10m checks.`
+        copy: `${good} good · ${falseSignals} false after bid-ask adjusted 3m/5m/10m checks.`
       },
       {
         label: "Suggested Response Gate",
@@ -1893,20 +1920,20 @@
         copy: responseSuggestion.copy
       },
       {
-        label: "Confidence Separation",
-        value: completed.length ? `${price(avgGoodConfidence, 0)} / ${price(avgFalseConfidence, 0)}` : "--",
-        tone: avgGoodConfidence > avgFalseConfidence ? "good" : "warn",
-        copy: "Good avg confidence versus false avg confidence."
+        label: "Recorder Quality",
+        value: qualityGood ? "Clean" : "Filtered",
+        tone: qualityGood ? "good" : "warn",
+        copy: `${nonLiveIgnored} demo · ${staleIgnored} stale · ${outsideIgnored} outside-session ignored.`
       }
     ];
   }
 
   function suggestResponseThreshold(completed) {
-    if (completed.length < 5) {
+    if (completed.length < 20) {
       return {
         value: "Collect data",
         tone: "neutral",
-        copy: "Need at least 5 completed signals before threshold suggestion."
+        copy: "Need at least 20 independent completed signals before a threshold suggestion."
       };
     }
 
@@ -1919,7 +1946,7 @@
         count: sample.length,
         rate: sample.length ? wins / sample.length : 0
       };
-    }).filter((item) => item.count >= 3).sort((a, b) => b.rate - a.rate || b.count - a.count);
+    }).filter((item) => item.count >= 10).sort((a, b) => b.rate - a.rate || b.count - a.count);
 
     if (!ranked.length) {
       return {
@@ -1944,7 +1971,7 @@
         <td>${formatTime(signal.time)}</td>
         <td>${escapeHtml(signal.side)}</td>
         <td>${price(signal.strike, 0)}</td>
-        <td>${signal.confidence}%</td>
+        <td>${escapeHtml(signal.setup || "Pressure trigger")}</td>
         <td>${outcomeCell(signal.checks["180"])}</td>
         <td>${outcomeCell(signal.checks["300"])}</td>
         <td>${outcomeCell(signal.checks["600"])}</td>
@@ -1956,7 +1983,7 @@
   function outcomeCell(check) {
     if (!check) return '<span class="muted">Pending</span>';
     const tone = check.passed ? "positive" : "negative";
-    return `<span class="${tone}">${signed(check.optionMove)} prem / ${signed(check.spotMove)} spot</span>`;
+    return `<span class="${tone}" title="MFE ${signed(check.mfe)} · MAE ${signed(check.mae)}">${signed(check.netOptionMove)} net / ${signed(check.spotMove)} spot</span>`;
   }
 
   function resultTag(result) {
@@ -2146,6 +2173,69 @@
     if (instrumentKey.includes("Bank")) return "BANKNIFTY";
     if (instrumentKey.includes("Fin")) return "FINNIFTY";
     return "NIFTY";
+  }
+
+  function calibrationFingerprint(snapshot) {
+    const atmIndex = snapshot.rows.findIndex((row) => row.strike === snapshot.atmStrike);
+    const nearby = snapshot.rows.slice(Math.max(0, atmIndex - 1), atmIndex + 2);
+    return [
+      price(snapshot.spot),
+      price(snapshot.atmStraddle),
+      price(snapshot.atmIv, 3),
+      snapshot.callOi,
+      snapshot.putOi,
+      ...nearby.flatMap((row) => [
+        row.strike,
+        price(row.ce.ltp), row.ce.oi, row.ce.volume,
+        price(row.pe.ltp), row.pe.oi, row.pe.volume
+      ])
+    ].join("|");
+  }
+
+  function findOutcomeSnapshot(targetTime) {
+    const candidates = state.history.filter((snapshot) => (
+      snapshot.source === "live"
+      && snapshot.time >= targetTime
+      && snapshot.time <= targetTime + OUTCOME_TOLERANCE_MS
+      && isMarketSessionIst(snapshot.time)
+    ));
+    return candidates.sort((a, b) => Math.abs(a.time - targetTime) - Math.abs(b.time - targetTime))[0] || null;
+  }
+
+  function isMarketSessionIst(time) {
+    const parts = istParts(time);
+    if (parts.weekday === "Sat" || parts.weekday === "Sun") return false;
+    const minute = parts.hour * 60 + parts.minute;
+    return minute >= 9 * 60 + 15 && minute <= 15 * 60 + 30;
+  }
+
+  function istSessionDate(time) {
+    const parts = istParts(time);
+    return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+  }
+
+  function istParts(time) {
+    const values = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      weekday: "short",
+      hourCycle: "h23"
+    }).formatToParts(new Date(time)).reduce((result, part) => {
+      result[part.type] = part.value;
+      return result;
+    }, {});
+    return {
+      year: Number(values.year),
+      month: Number(values.month),
+      day: Number(values.day),
+      hour: Number(values.hour),
+      minute: Number(values.minute),
+      weekday: values.weekday
+    };
   }
 
   function number(value) {
