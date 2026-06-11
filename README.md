@@ -82,6 +82,17 @@ Open = current value - 09:15-09:20 opening median
 
 The rolling windows allow at most 45 seconds of timestamp difference. If a valid baseline is missing, the UI shows `Building` instead of reusing another timeframe.
 
+### Pressure–Response Intelligence
+
+The Market Structure card also compares material five-minute option inventory with the spot response:
+
+- scans ATM ±3 strikes and keeps only contracts whose OI change and delta-adjusted premium residual are both material versus the ATM ±11 cross-section
+- maps CE/PE buildup, writing, covering, and long exit into directional inventory without assigning an arbitrary weighted score
+- compares directional spot displacement with the session median absolute 5m move to label release, partial response, or absorption
+- tracks 15m max-OI wall migration, OI load across the next three strikes, and CE-to-PE inventory role reversal at a crossed strike
+
+The narrative is an inferred market-mechanics explanation, not proof of an external news or event-driven cause.
+
 ### Recording While The Dashboard Is Closed
 
 The protected endpoint `/api/cron/capture` records NIFTY50, BANKNIFTY, FINNIFTY, and SENSEX. Add this Vercel environment variable:

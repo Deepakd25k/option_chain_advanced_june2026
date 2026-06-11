@@ -23,7 +23,18 @@ if (missing.length) {
 }
 
 const html = fs.readFileSync(path.resolve(__dirname, "..", "index.html"), "utf8");
-for (const id of ["marketStructureCard", "structureHeadline", "structureTable", "structureEvidence", "matrixTable", "outcomeTable"]) {
+for (const id of [
+  "marketStructureCard",
+  "structureHeadline",
+  "pressureHeadline",
+  "pressureVerdict",
+  "pressureMetrics",
+  "pressureNarrative",
+  "structureTable",
+  "structureEvidence",
+  "matrixTable",
+  "outcomeTable"
+]) {
   if (!html.includes(`id="${id}"`)) {
     console.error(`Missing DOM id: ${id}`);
     process.exit(1);
@@ -57,6 +68,12 @@ const calibrationGuards = [
   "state.sessionHydrated",
   "supportAdding && resistanceWithdrawing",
   "resistanceAdding && supportWithdrawing",
+  "buildPressureResponseRead(latest",
+  "sessionMedianFiveMinuteMove(latest.time)",
+  "detectInventoryRoleFlip(latest",
+  "pressurePathLoad(latest",
+  "PRESSURE ABSORBED",
+  "NO CAUSAL EDGE",
   "setupAlreadyTracked",
   "findOutcomeSnapshot(targetTime)",
   "snapshot.source === \"live\"",

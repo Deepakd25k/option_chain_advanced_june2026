@@ -302,6 +302,101 @@ input {
 .structure-location span:last-child { border-right: 0; }
 .structure-location strong { color: var(--text); margin-left: 4px; }
 
+.pressure-read {
+  background: #11151b;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.pressure-read-heading {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  padding: 11px 13px 10px;
+}
+
+.pressure-read-heading .eyebrow {
+  margin-bottom: 4px;
+}
+
+.pressure-read-heading strong {
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.pressure-verdict {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  font-weight: 900;
+  padding: 6px 8px;
+}
+
+.pressure-verdict.positive {
+  background: var(--green-2);
+  border-color: rgba(47, 191, 155, 0.45);
+  color: #80e7d0;
+}
+
+.pressure-verdict.negative {
+  background: var(--rose-2);
+  border-color: rgba(240, 100, 134, 0.45);
+  color: #ffb1c2;
+}
+
+.pressure-verdict.warn {
+  background: var(--amber-2);
+  border-color: rgba(232, 182, 91, 0.45);
+  color: #ffd892;
+}
+
+.pressure-metrics {
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.pressure-metrics > div {
+  border-right: 1px solid var(--line);
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 12px;
+}
+
+.pressure-metrics > div:last-child { border-right: 0; }
+
+.pressure-metrics span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.pressure-metrics strong {
+  font-size: 0.78rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.pressure-metrics .positive strong { color: #7ee0cb; }
+.pressure-metrics .negative strong { color: #ff9bb2; }
+.pressure-metrics .warn strong { color: #ffd892; }
+
+.pressure-narrative {
+  border-top: 1px solid var(--line);
+  color: #d5dae4;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  padding: 10px 13px 11px;
+}
+
 .structure-table {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -1115,6 +1210,22 @@ td {
 
   .structure-location span:nth-last-child(-n + 2) {
     border-bottom: 0;
+  }
+
+  .pressure-read-heading {
+    align-items: flex-start;
+  }
+
+  .pressure-metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .pressure-metrics > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .pressure-metrics > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--line);
   }
 
   .structure-table-head {

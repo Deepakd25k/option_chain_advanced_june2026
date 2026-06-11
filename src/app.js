@@ -68,7 +68,8 @@
       "sourceLine", "recorderStatus", "refreshButton", "pauseButton", "symbolSelect", "expiryInput",
       "activeWindow", "refreshInterval", "marketStructureCard", "structureHeadline", "structureOrigin",
       "structureState", "structureLocation", "structureTable", "structureEvidence", "structureDecision",
-      "structureLevels", "structureStability", "matrixTable",
+      "structureLevels", "structureStability", "pressureHeadline", "pressureVerdict", "pressureMetrics",
+      "pressureNarrative", "matrixTable",
       "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable"
     ].forEach((id) => {
       el[id] = document.getElementById(id);
@@ -626,6 +627,7 @@
       `<span>OI Resistance <strong>${read.resistance ? `${price(read.resistance, 0)} · ${compact(read.resistanceWall.oi)}` : "Building"}</strong></span>`,
       `<span>${read.microRange ? `Range <strong>${price(read.microRange.width, 0)} pts · ${read.microRange.minutes}m</strong>` : "Range <strong>Not confirmed</strong>"}</span>`
     ].join("");
+    renderPressureResponse(read.pressure);
     el.structureTable.innerHTML = `
       <div class="structure-table-head">
         <span>Contract</span>${STRUCTURE_WINDOWS.map((item) => `<span>${item.label}</span>`).join("")}
@@ -645,6 +647,19 @@
     el.structureStability.textContent = read.stability.windows
       ? `${read.stability.restored ? "DB restored · " : ""}Stable ${read.stability.windows} completed 5m window${read.stability.windows === 1 ? "" : "s"}`
       : "Completed 5m confirmation building";
+  }
+
+  function renderPressureResponse(pressure) {
+    el.pressureHeadline.textContent = pressure.headline;
+    el.pressureVerdict.textContent = pressure.verdict;
+    el.pressureVerdict.className = `pressure-verdict ${pressure.tone}`;
+    el.pressureMetrics.innerHTML = pressure.metrics.map((metric) => `
+      <div class="${metric.tone}">
+        <span>${escapeHtml(metric.label)}</span>
+        <strong>${escapeHtml(metric.value)}</strong>
+      </div>
+    `).join("");
+    el.pressureNarrative.textContent = pressure.narrative;
   }
 
   function structureContractRow(contract) {
@@ -701,6 +716,13 @@
       location,
       openingReady: openingSnapshots.length >= 3
     });
+    const pressure = buildPressureResponseRead(latest, {
+      step,
+      support,
+      resistance,
+      supportWall,
+      resistanceWall
+    });
     return {
       ...interpretation,
       origin,
@@ -710,7 +732,219 @@
       contracts,
       microRange,
       supportWall,
-      resistanceWall
+      resistanceWall,
+      pressure
+    };
+  }
+
+  function buildPressureResponseRead(latest, structure) {
+    const reference = getOlderSnapshot(300);
+    if (!reference) return buildingPressureRead("Exact 5m DB baseline is not available yet");
+
+    const atmIndex = latest.rows.findIndex((row) => row.strike === latest.atmStrike);
+    const nearbyRows = latest.rows.slice(Math.max(0, atmIndex - 3), atmIndex + 4);
+    const flows = nearbyRows.flatMap((row) => ["CE", "PE"].map((side) => {
+      const windowRead = buildStructureWindow(latest, [], row.strike, side, 300);
+      if (!windowRead.available) return null;
+      const inventory = inventoryWindowRead(windowRead, side);
+      if (!inventory.clean) return null;
+      return {
+        strike: row.strike,
+        side,
+        type: inventory.type,
+        direction: inventoryDirection(side, inventory.type),
+        oiChange: windowRead.oiChange,
+        residual: windowRead.residual
+      };
+    })).filter(Boolean);
+
+    const bullish = flows.filter((flow) => flow.direction === "up");
+    const bearish = flows.filter((flow) => flow.direction === "down");
+    const direction = bullish.length > bearish.length && bullish.length >= 2
+      ? "up"
+      : bearish.length > bullish.length && bearish.length >= 2
+        ? "down"
+        : null;
+    const dominant = direction === "up" ? bullish : direction === "down" ? bearish : [];
+    const normalMove = sessionMedianFiveMinuteMove(latest.time);
+    const rawSpotMove = latest.spot - reference.spot;
+    const directionalSpotMove = direction === "up" ? rawSpotMove : direction === "down" ? -rawSpotMove : 0;
+    const responseRatio = normalMove > 0 ? directionalSpotMove / normalMove : null;
+    const drivers = describeInventoryDrivers(dominant);
+    const migration = pressureWallMigration(latest, structure);
+    const path = pressurePathLoad(latest, direction, structure.step);
+    const roleFlip = detectInventoryRoleFlip(latest, structure.step);
+
+    if (!direction) {
+      return {
+        headline: flows.length
+          ? `SPLIT INVENTORY · ${bullish.length} upside vs ${bearish.length} downside contracts`
+          : "NO MATERIAL INVENTORY IMPULSE",
+        verdict: "NO CAUSAL EDGE",
+        tone: "neutral",
+        metrics: [
+          pressureMetric("Flow breadth", `${bullish.length} up · ${bearish.length} down`, "neutral"),
+          pressureMetric("Spot response", `${signed(rawSpotMove)} pts / 5m`, "neutral"),
+          pressureMetric("Wall / role", migration.value, migration.tone),
+          pressureMetric("Path load", "Direction unresolved", "neutral")
+        ],
+        narrative: flows.length
+          ? "Material OI and premium-residual flows disagree across nearby strikes. The current spot move cannot yet be attributed to one inventory side."
+          : "Nearby contracts do not show simultaneous material OI and premium-residual change. Treat the current spot move as unproven by option inventory."
+      };
+    }
+
+    const directionLabel = direction === "up" ? "UPSIDE" : "DOWNSIDE";
+    const oppositeMove = directionalSpotMove <= 0;
+    const released = !oppositeMove && responseRatio !== null && responseRatio >= 1;
+    const verdict = oppositeMove
+      ? "PRESSURE ABSORBED"
+      : released
+        ? "MOVE RELEASED"
+        : "PARTIAL RESPONSE";
+    const tone = oppositeMove || !released ? "warn" : direction === "up" ? "positive" : "negative";
+    const responseText = responseRatio === null
+      ? `${signed(rawSpotMove)} pts · normal building`
+      : `${signed(rawSpotMove)} pts · ${Math.abs(responseRatio).toFixed(2)}× normal`;
+    const flowTone = direction === "up" ? "positive" : "negative";
+    const roleText = roleFlip.confirmed ? ` ${roleFlip.value}.` : "";
+    const narrative = oppositeMove
+      ? `${directionLabel.toLowerCase()} inventory pressure appeared across ${dominant.length}/${flows.length} material contracts, but spot moved ${signed(rawSpotMove)} points. The pressure is being absorbed; a directional break is not confirmed.${roleText}`
+      : `Inferred ${directionLabel.toLowerCase()} driver: ${drivers}. Spot responded ${responseRatio === null ? "in the same direction" : `${responseRatio.toFixed(2)}× its session-median 5m move`} with ${dominant.length}/${flows.length} material contracts aligned.${roleText}`;
+
+    return {
+      headline: `${directionLabel} INVENTORY · ${drivers}`,
+      verdict,
+      tone,
+      metrics: [
+        pressureMetric("Flow breadth", `${dominant.length}/${flows.length} aligned · ${bullish.length}↑ ${bearish.length}↓`, flowTone),
+        pressureMetric("Spot response", responseText, oppositeMove ? "warn" : flowTone),
+        pressureMetric("Wall / role", roleFlip.confirmed ? roleFlip.value : migration.value, roleFlip.confirmed ? roleFlip.tone : migration.tone),
+        pressureMetric("Path load", path.value, path.tone)
+      ],
+      narrative
+    };
+  }
+
+  function buildingPressureRead(reason) {
+    return {
+      headline: reason,
+      verdict: "UNPROVEN",
+      tone: "building",
+      metrics: [
+        pressureMetric("Flow breadth", "Building", "neutral"),
+        pressureMetric("Spot response", "Building", "neutral"),
+        pressureMetric("Wall / role", "Building", "neutral"),
+        pressureMetric("Path load", "Building", "neutral")
+      ],
+      narrative: "The inferred move driver will appear only after material OI and delta-adjusted premium residual agree across multiple nearby contracts."
+    };
+  }
+
+  function pressureMetric(label, value, tone) {
+    return { label, value, tone: tone || "neutral" };
+  }
+
+  function inventoryDirection(side, type) {
+    if (side === "CE") {
+      return type === "long-build" || type === "covering" ? "up" : "down";
+    }
+    return type === "writing" || type === "long-unwind" ? "up" : "down";
+  }
+
+  function describeInventoryDrivers(flows) {
+    const labels = flows.reduce((counts, flow) => {
+      const key = `${flow.side}:${flow.type}`;
+      counts[key] = (counts[key] || 0) + 1;
+      return counts;
+    }, {});
+    const names = {
+      "CE:long-build": "CE long buildup",
+      "CE:writing": "CE writing",
+      "CE:covering": "CE short covering",
+      "CE:long-unwind": "CE long exit",
+      "PE:long-build": "PE long buildup",
+      "PE:writing": "PE writing",
+      "PE:covering": "PE short covering",
+      "PE:long-unwind": "PE long exit"
+    };
+    return Object.entries(labels)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 2)
+      .map(([key, count]) => `${names[key]}${count > 1 ? ` ×${count}` : ""}`)
+      .join(" + ") || "material flow unresolved";
+  }
+
+  function sessionMedianFiveMinuteMove(referenceTime) {
+    const candles = state.candles5m.length ? state.candles5m : buildSnapshotFiveMinuteCandles(referenceTime);
+    const sessionDate = istSessionDate(referenceTime);
+    const completed = candles.filter((candle) => istSessionDate(candle.start) === sessionDate).sort((a, b) => a.start - b.start);
+    const changes = completed.slice(1).map((candle, index) => Math.abs(candle.close - completed[index].close)).filter((value) => value > 0);
+    return median(changes);
+  }
+
+  function pressureWallMigration(latest, structure) {
+    const reference = getOlderSnapshot(900);
+    if (!reference) return { value: "15m history building", tone: "neutral" };
+    const oldSupport = findMaxOiWall(reference.rows, reference.spot, "PE", structure.step);
+    const oldResistance = findMaxOiWall(reference.rows, reference.spot, "CE", structure.step);
+    if (!oldSupport || !oldResistance || !structure.support || !structure.resistance) {
+      return { value: "Wall history incomplete", tone: "neutral" };
+    }
+    const supportShift = structure.support - oldSupport.strike;
+    const resistanceShift = structure.resistance - oldResistance.strike;
+    const alignedUp = supportShift > 0 && resistanceShift >= 0;
+    const alignedDown = resistanceShift < 0 && supportShift <= 0;
+    return {
+      value: `PE ${price(oldSupport.strike, 0)}→${price(structure.support, 0)} · CE ${price(oldResistance.strike, 0)}→${price(structure.resistance, 0)}`,
+      tone: alignedUp ? "positive" : alignedDown ? "negative" : "neutral"
+    };
+  }
+
+  function pressurePathLoad(latest, direction, step) {
+    if (!direction) return { value: "Direction unresolved", tone: "neutral" };
+    const side = direction === "up" ? "CE" : "PE";
+    const ordered = latest.rows.filter((row) => (
+      direction === "up"
+        ? row.strike > latest.spot && row.strike - latest.spot <= step * WALL_SCAN_STRIKES
+        : row.strike < latest.spot && latest.spot - row.strike <= step * WALL_SCAN_STRIKES
+    )).sort((a, b) => direction === "up" ? a.strike - b.strike : b.strike - a.strike);
+    const target = ordered.slice(0, 3);
+    if (!target.length) return { value: "Target strikes unavailable", tone: "neutral" };
+    const oi = (row) => side === "CE" ? row.ce.oi : row.pe.oi;
+    const localMedian = median(ordered.map(oi).filter((value) => value > 0));
+    const targetAverage = sum(target, oi) / target.length;
+    const loadRatio = localMedian ? targetAverage / localMedian : 0;
+    const blocker = [...target].sort((a, b) => oi(b) - oi(a))[0];
+    return {
+      value: `${loadRatio.toFixed(2)}× local · ${price(blocker.strike, 0)} blocker`,
+      tone: loadRatio < 1 ? "positive" : loadRatio > 1 ? "warn" : "neutral"
+    };
+  }
+
+  function detectInventoryRoleFlip(latest, step) {
+    const reference = getOlderSnapshot(900);
+    if (!reference) return { value: "", tone: "neutral", confirmed: false };
+    const crossed = latest.rows.filter((row) => (
+      (reference.spot < row.strike && latest.spot >= row.strike)
+      || (reference.spot > row.strike && latest.spot <= row.strike)
+    )).sort((a, b) => Math.abs(a.strike - latest.spot) - Math.abs(b.strike - latest.spot));
+    if (!crossed.length) return { value: "", tone: "neutral", confirmed: false };
+    const strike = crossed[0].strike;
+    const upward = latest.spot >= strike;
+    const ce = buildStructureWindow(latest, [], strike, "CE", 900);
+    const pe = buildStructureWindow(latest, [], strike, "PE", 900);
+    const confirmed = ce.available && pe.available && ce.materialOi && pe.materialOi && (
+      upward
+        ? ce.oiChange < 0 && pe.oiChange > 0
+        : pe.oiChange < 0 && ce.oiChange > 0
+    );
+    return {
+      value: confirmed
+        ? `${price(strike, 0)} ${upward ? "R→S" : "S→R"} inventory flip`
+        : `${price(strike, 0)} crossed · role unconfirmed`,
+      tone: confirmed ? (upward ? "positive" : "negative") : "warn",
+      confirmed
     };
   }
 
