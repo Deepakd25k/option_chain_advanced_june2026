@@ -73,7 +73,14 @@ for (const guard of calibrationGuards) {
 }
 
 const sessionStore = fs.readFileSync(path.resolve(__dirname, "..", "lib/session-store.js"), "utf8");
-for (const guard of ["date_bin(", "candles5m: candleRows.map", "array_agg(spot ORDER BY captured_at ASC)"]) {
+for (const guard of [
+  "date_bin(",
+  "loadSessionCandles(sql",
+  "GROUP BY 1",
+  "Session candle reconstruction failed",
+  "candles5m: candleRows.map",
+  "array_agg(spot ORDER BY captured_at ASC)"
+]) {
   if (!sessionStore.includes(guard)) {
     console.error(`Missing session range-history guard: ${guard}`);
     process.exit(1);
