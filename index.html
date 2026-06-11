@@ -161,8 +161,13 @@
               </div>
               <div>
                 <strong>Stable OI Walls</strong>
-                <code>scan = ATM ±11 strikes; support = strongest PE strike + next lower PE cluster</code>
-                <code>resistance = strongest CE strike + next higher CE; median + deviation and completed-window persistence required</code>
+                <code>scan = ATM ±11; PE uses strike + next lower, CE uses strike + next higher</code>
+                <code>median + deviation qualifies strong clusters; nearest qualified wall becomes active after completed-window persistence</code>
+              </div>
+              <div>
+                <strong>Confirmed Range</strong>
+                <code>longest trailing completed-5m enclosure with high-low at or below 100 points</code>
+                <code>minimum 20 minutes, two upper/lower boundary interactions, and two direction changes required</code>
               </div>
               <div>
                 <strong>Actual Changes</strong>

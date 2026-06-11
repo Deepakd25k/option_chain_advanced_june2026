@@ -12,6 +12,7 @@
   const SIGNAL_COOLDOWN_MS = 5 * 60 * 1000;
   const OUTCOME_TOLERANCE_MS = 45 * 1000;
   const WALL_SCAN_STRIKES = 11;
+  const MAX_CONFIRMED_RANGE_POINTS = 100;
   const STRUCTURE_WINDOWS = [
     { key: "open", label: "Open", seconds: null },
     { key: "300", label: "5m", seconds: 300 },
@@ -162,7 +163,8 @@
         throw new Error(payload.error || "Unable to fetch option-chain data");
       }
       const snapshot = normalizeSnapshot(payload);
-      state.candles5m = normalizeFiveMinuteCandles(payload.candles5m, snapshot.time);
+      const liveCandles = normalizeFiveMinuteCandles(payload.candles5m, snapshot.time);
+      if (liveCandles.length) state.candles5m = liveCandles;
       if (payload.expiry && payload.expiry !== el.expiryInput.value) {
         ensureExpiryOption(payload.expiry);
         el.expiryInput.value = payload.expiry;
@@ -205,6 +207,7 @@
       (payload.snapshots || []).forEach((storedPayload) => {
         addSnapshot(normalizeSnapshot(storedPayload));
       });
+      state.candles5m = normalizeFiveMinuteCandles(payload.candles5m, Date.now());
       state.sessionHydrated = state.history.length > 0;
       updateRecorderStatus({
         configured: payload.configured,
@@ -411,7 +414,7 @@
       }))
       .filter((candle) => Number.isFinite(candle.start) && candle.end <= referenceTime && candle.close > 0)
       .sort((a, b) => a.start - b.start)
-      .slice(-24);
+      .slice(-75);
   }
 
   function findWalls(rows, spot) {
@@ -619,9 +622,9 @@
     el.structureState.textContent = read.state;
     el.structureLocation.innerHTML = [
       `<span>Spot <strong>${price(read.spot)}</strong></span>`,
-      `<span>Strong Support <strong>${read.support ? `${price(read.support, 0)} · ${compact(read.supportWall.clusterOi)}` : "Building"}</strong></span>`,
-      `<span>Strong Resistance <strong>${read.resistance ? `${price(read.resistance, 0)} · ${compact(read.resistanceWall.clusterOi)}` : "Building"}</strong></span>`,
-      `<span>${read.microRange ? `Range <strong>${price(read.microRange.low, 0)}–${price(read.microRange.high, 0)}</strong>` : "Range <strong>Not confirmed</strong>"}</span>`
+      `<span>OI Support <strong>${read.support ? `${price(read.support, 0)} · ${compact(read.supportWall.clusterOi)}` : "Building"}</strong></span>`,
+      `<span>OI Resistance <strong>${read.resistance ? `${price(read.resistance, 0)} · ${compact(read.resistanceWall.clusterOi)}` : "Building"}</strong></span>`,
+      `<span>${read.microRange ? `Range <strong>${price(read.microRange.width, 0)} pts · ${read.microRange.minutes}m</strong>` : "Range <strong>Not confirmed</strong>"}</span>`
     ].join("");
     el.structureTable.innerHTML = `
       <div class="structure-table-head">
@@ -683,7 +686,7 @@
     const support = supportWall ? supportWall.strike : 0;
     const resistance = resistanceWall ? resistanceWall.strike : 0;
     const contracts = buildStructureContracts(latest, openingSnapshots, support, resistance);
-    const microRange = detectMicroRange(latest, step);
+    const microRange = detectMicroRange(latest);
     const location = structureLocation(latest.spot, support, resistance, step, microRange);
     const origin = buildSessionOrigin(latest, openingSnapshots, openingSupport, openingResistance, step);
     const interpretation = interpretMarketStructure({
@@ -758,17 +761,33 @@
         oi: option.oi,
         clusterOi: option.oi + (adjacentOption ? adjacentOption.oi : 0)
       };
-    }).filter((item) => item.clusterOi > 0).sort((a, b) => b.clusterOi - a.clusterOi || Math.abs(a.strike - spot) - Math.abs(b.strike - spot));
+    }).filter((item) => item.clusterOi > 0);
     if (!candidates.length) return null;
     const center = median(candidates.map((item) => item.clusterOi));
     const mad = median(candidates.map((item) => Math.abs(item.clusterOi - center)));
+    const positiveDeviations = candidates
+      .map((item) => item.clusterOi - center)
+      .filter((value) => value > 0);
+    const effectiveDeviation = Math.max(mad, median(positiveDeviations));
+    const threshold = candidates.length === 1
+      ? center
+      : effectiveDeviation ? center + effectiveDeviation : Infinity;
+    const ranked = [...candidates].sort((a, b) => b.clusterOi - a.clusterOi || Math.abs(a.strike - spot) - Math.abs(b.strike - spot));
+    const qualified = candidates
+      .filter((item) => item.clusterOi >= threshold)
+      .sort((a, b) => Math.abs(a.strike - spot) - Math.abs(b.strike - spot) || b.clusterOi - a.clusterOi);
+    const active = qualified[0] || ranked[0];
+    const major = ranked[0];
     return {
-      ...candidates[0],
-      significant: candidates[0].clusterOi >= center + mad,
-      secondClusterOi: candidates[1] ? candidates[1].clusterOi : 0,
+      ...active,
+      significant: qualified.includes(active),
+      threshold,
+      majorStrike: major.strike,
+      majorClusterOi: major.clusterOi,
+      secondClusterOi: ranked[1] ? ranked[1].clusterOi : 0,
       scannedStrikes: candidates.length,
-      dominance: candidates[1] && candidates[1].clusterOi
-        ? candidates[0].clusterOi / candidates[1].clusterOi
+      dominance: ranked[1] && ranked[1].clusterOi
+        ? major.clusterOi / ranked[1].clusterOi
         : 1
     };
   }
@@ -786,7 +805,10 @@
     if (candidates.length >= 3 && candidates[1].strike === candidates[2].strike) {
       return { ...candidates[1], source: "prior stable wall", stable: true, confirmations: 2, pendingStrike: candidates[0].strike };
     }
-    if (openingWall) return openingWall;
+    const openingStillActionable = openingWall && (side === "PE"
+      ? openingWall.strike <= latest.spot
+      : openingWall.strike >= latest.spot);
+    if (openingStillActionable) return openingWall;
     const latestCandidate = findClusterWall(latest.rows, latest.spot, side, step);
     const current = candidates[0] || (latestCandidate && latestCandidate.significant ? latestCandidate : null);
     return current ? { ...current, source: "building", stable: false, confirmations: 0 } : null;
@@ -1013,20 +1035,36 @@
     return { state: "Mixed inventory", tone: "neutral" };
   }
 
-  function detectMicroRange(latest, step) {
+  function detectMicroRange(latest) {
     const candles = state.candles5m.length ? state.candles5m : buildSnapshotFiveMinuteCandles(latest.time);
-    for (let length = Math.min(6, candles.length); length >= 3; length -= 1) {
-      const recent = candles.slice(-length);
+    const sessionDate = istSessionDate(latest.time);
+    const sessionCandles = candles.filter((candle) => istSessionDate(candle.start) === sessionDate);
+    for (let length = sessionCandles.length; length >= 4; length -= 1) {
+      const recent = sessionCandles.slice(-length);
       const high = Math.max(...recent.map((candle) => candle.high));
       const low = Math.min(...recent.map((candle) => candle.low));
       const width = high - low;
-      if (width <= 0 || width > step) continue;
-      const upperBoundary = low + width * 0.75;
-      const lowerBoundary = low + width * 0.25;
+      if (width <= 0 || width > MAX_CONFIRMED_RANGE_POINTS) continue;
+      const upperBoundary = low + width * 0.8;
+      const lowerBoundary = low + width * 0.2;
       const upperTouches = recent.filter((candle) => candle.high >= upperBoundary).length;
       const lowerTouches = recent.filter((candle) => candle.low <= lowerBoundary).length;
-      if (upperTouches >= 2 && lowerTouches >= 2) {
-        return { low, high, width, minutes: length * 5, upperTouches, lowerTouches };
+      const directionChanges = recent.slice(2).reduce((count, candle, index) => {
+        const previousMove = recent[index + 1].close - recent[index].close;
+        const currentMove = candle.close - recent[index + 1].close;
+        return count + (previousMove && currentMove && Math.sign(previousMove) !== Math.sign(currentMove) ? 1 : 0);
+      }, 0);
+      if (upperTouches >= 2 && lowerTouches >= 2 && directionChanges >= 2) {
+        return {
+          low,
+          high,
+          width,
+          minutes: length * 5,
+          startedAt: recent[0].start,
+          upperTouches,
+          lowerTouches,
+          directionChanges
+        };
       }
     }
     return null;
@@ -1057,7 +1095,7 @@
     else if (openingSpot > resistanceWall.strike) location = `Opened above ${price(resistanceWall.strike, 0)} resistance`;
     else if (supportDistance <= nearDistance && supportDistance <= resistanceDistance) location = `Opened near ${price(supportWall.strike, 0)} support`;
     else if (resistanceDistance <= nearDistance) location = `Opened near ${price(resistanceWall.strike, 0)} resistance`;
-    return `${gapText} · ${location} · strongest clusters from ATM ±${WALL_SCAN_STRIKES}`;
+    return `${gapText} · ${location} · nearest qualified OI walls inside ATM ±${WALL_SCAN_STRIKES}`;
   }
 
   function interpretMarketStructure(input) {
@@ -1213,7 +1251,7 @@
       state: stateLabel,
       decision,
       tone,
-      headline: `${location} · ${microRange ? `${microRange.minutes}m rotation` : `ATM ±${WALL_SCAN_STRIKES} strongest-wall read`}`,
+      headline: `${location} · ${microRange ? `${price(microRange.low, 0)}–${price(microRange.high, 0)} · ${microRange.minutes}m confirmed range` : `ATM ±${WALL_SCAN_STRIKES} active-wall read`}`,
       evidence,
       trigger,
       invalidation,

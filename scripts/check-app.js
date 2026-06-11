@@ -49,7 +49,10 @@ const calibrationGuards = [
   "openingBaselineSnapshots(latest)",
   "buildStructureWindow(latest, openingSnapshots",
   "const WALL_SCAN_STRIKES = 11",
+  "const MAX_CONFIRMED_RANGE_POINTS = 100",
   "classifyStructureInventory(windows, definition.side)",
+  "directionChanges >= 2",
+  "nearest qualified OI walls inside ATM",
   "state.sessionHydrated",
   "supportAdding && resistanceWithdrawing",
   "resistanceAdding && supportWithdrawing",
@@ -64,6 +67,14 @@ const calibrationGuards = [
 for (const guard of calibrationGuards) {
   if (!app.includes(guard)) {
     console.error(`Missing calibration v2 guard: ${guard}`);
+    process.exit(1);
+  }
+}
+
+const sessionStore = fs.readFileSync(path.resolve(__dirname, "..", "lib/session-store.js"), "utf8");
+for (const guard of ["date_bin(", "candles5m: candleRows.map", "array_agg(spot ORDER BY captured_at ASC)"]) {
+  if (!sessionStore.includes(guard)) {
+    console.error(`Missing session range-history guard: ${guard}`);
     process.exit(1);
   }
 }
