@@ -371,6 +371,9 @@ input {
 .structure-contract-name strong { font-size: 0.95rem; }
 .structure-window strong { font-size: 0.84rem; }
 .structure-window.building strong { color: var(--muted); }
+.structure-window em.positive { color: #7ee0cb; }
+.structure-window em.negative { color: #ff9bb2; }
+.structure-window em.muted { color: var(--muted); }
 
 .structure-inventory {
   border: 1px solid var(--line);
