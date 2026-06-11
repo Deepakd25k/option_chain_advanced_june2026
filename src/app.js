@@ -622,8 +622,8 @@
     el.structureState.textContent = read.state;
     el.structureLocation.innerHTML = [
       `<span>Spot <strong>${price(read.spot)}</strong></span>`,
-      `<span>OI Support <strong>${read.support ? `${price(read.support, 0)} · ${compact(read.supportWall.clusterOi)}` : "Building"}</strong></span>`,
-      `<span>OI Resistance <strong>${read.resistance ? `${price(read.resistance, 0)} · ${compact(read.resistanceWall.clusterOi)}` : "Building"}</strong></span>`,
+      `<span>OI Support <strong>${read.support ? `${price(read.support, 0)} · ${compact(read.supportWall.oi)}` : "Building"}</strong></span>`,
+      `<span>OI Resistance <strong>${read.resistance ? `${price(read.resistance, 0)} · ${compact(read.resistanceWall.oi)}` : "Building"}</strong></span>`,
       `<span>${read.microRange ? `Range <strong>${price(read.microRange.width, 0)} pts · ${read.microRange.minutes}m</strong>` : "Range <strong>Not confirmed</strong>"}</span>`
     ].join("");
     el.structureTable.innerHTML = `
@@ -741,77 +741,51 @@
       };
     });
     const spot = median(snapshots.map((snapshot) => snapshot.spot));
-    const wall = findClusterWall(rows, spot, side, step);
-    return wall && wall.significant ? { ...wall, source: "opening median", stable: true, confirmations: 1 } : null;
+    const wall = findMaxOiWall(rows, spot, side, step);
+    return wall ? { ...wall, source: "opening median max OI", stable: true, confirmations: 1 } : null;
   }
 
-  function findClusterWall(rows, spot, side, step) {
+  function findMaxOiWall(rows, spot, side, step) {
     const isSupport = side === "PE";
     const candidates = rows.filter((row) => (
       isSupport
         ? row.strike <= spot && spot - row.strike <= step * WALL_SCAN_STRIKES
         : row.strike >= spot && row.strike - spot <= step * WALL_SCAN_STRIKES
     )).map((row) => {
-      const adjacentStrike = row.strike + (isSupport ? -step : step);
-      const adjacent = rows.find((item) => item.strike === adjacentStrike);
       const option = isSupport ? row.pe : row.ce;
-      const adjacentOption = adjacent ? (isSupport ? adjacent.pe : adjacent.ce) : null;
       return {
         strike: row.strike,
-        oi: option.oi,
-        clusterOi: option.oi + (adjacentOption ? adjacentOption.oi : 0)
+        oi: option.oi
       };
-    }).filter((item) => item.clusterOi > 0);
+    }).filter((item) => item.oi > 0)
+      .sort((a, b) => b.oi - a.oi || Math.abs(a.strike - spot) - Math.abs(b.strike - spot));
     if (!candidates.length) return null;
-    const center = median(candidates.map((item) => item.clusterOi));
-    const mad = median(candidates.map((item) => Math.abs(item.clusterOi - center)));
-    const positiveDeviations = candidates
-      .map((item) => item.clusterOi - center)
-      .filter((value) => value > 0);
-    const effectiveDeviation = Math.max(mad, median(positiveDeviations));
-    const threshold = candidates.length === 1
-      ? center
-      : effectiveDeviation ? center + effectiveDeviation : Infinity;
-    const ranked = [...candidates].sort((a, b) => b.clusterOi - a.clusterOi || Math.abs(a.strike - spot) - Math.abs(b.strike - spot));
-    const qualified = candidates
-      .filter((item) => item.clusterOi >= threshold)
-      .sort((a, b) => Math.abs(a.strike - spot) - Math.abs(b.strike - spot) || b.clusterOi - a.clusterOi);
-    const active = qualified[0] || ranked[0];
-    const major = ranked[0];
     return {
-      ...active,
-      significant: qualified.includes(active),
-      threshold,
-      majorStrike: major.strike,
-      majorClusterOi: major.clusterOi,
-      secondClusterOi: ranked[1] ? ranked[1].clusterOi : 0,
+      ...candidates[0],
+      significant: true,
+      secondOi: candidates[1] ? candidates[1].oi : 0,
       scannedStrikes: candidates.length,
-      dominance: ranked[1] && ranked[1].clusterOi
-        ? major.clusterOi / ranked[1].clusterOi
+      dominance: candidates[1] && candidates[1].oi
+        ? candidates[0].oi / candidates[1].oi
         : 1
     };
   }
 
   function resolveStableOiWall(latest, side, openingWall, step) {
+    const current = findMaxOiWall(latest.rows, latest.spot, side, step);
+    if (!current) return null;
     const snapshots = completedWindowSnapshots(latest.time, 3);
     const candidates = snapshots
-      .map((snapshot) => findClusterWall(snapshot.rows, snapshot.spot, side, step))
-      .filter((wall) => wall && wall.significant);
-    if (candidates.length >= 2 && candidates[0].strike === candidates[1].strike) {
-      let confirmations = 2;
-      if (candidates[2] && candidates[2].strike === candidates[0].strike) confirmations = 3;
-      return { ...candidates[0], source: "completed 5m", stable: true, confirmations };
-    }
-    if (candidates.length >= 3 && candidates[1].strike === candidates[2].strike) {
-      return { ...candidates[1], source: "prior stable wall", stable: true, confirmations: 2, pendingStrike: candidates[0].strike };
-    }
-    const openingStillActionable = openingWall && (side === "PE"
-      ? openingWall.strike <= latest.spot
-      : openingWall.strike >= latest.spot);
-    if (openingStillActionable) return openingWall;
-    const latestCandidate = findClusterWall(latest.rows, latest.spot, side, step);
-    const current = candidates[0] || (latestCandidate && latestCandidate.significant ? latestCandidate : null);
-    return current ? { ...current, source: "building", stable: false, confirmations: 0 } : null;
+      .map((snapshot) => findMaxOiWall(snapshot.rows, snapshot.spot, side, step))
+      .filter(Boolean);
+    const confirmations = candidates.filter((wall) => wall.strike === current.strike).length;
+    return {
+      ...current,
+      source: confirmations >= 2 ? "dynamic max OI · completed 5m confirmed" : "dynamic max OI",
+      stable: confirmations >= 2,
+      confirmations,
+      openingStrike: openingWall ? openingWall.strike : null
+    };
   }
 
   function completedWindowSnapshots(referenceTime, count) {
@@ -1095,7 +1069,7 @@
     else if (openingSpot > resistanceWall.strike) location = `Opened above ${price(resistanceWall.strike, 0)} resistance`;
     else if (supportDistance <= nearDistance && supportDistance <= resistanceDistance) location = `Opened near ${price(supportWall.strike, 0)} support`;
     else if (resistanceDistance <= nearDistance) location = `Opened near ${price(resistanceWall.strike, 0)} resistance`;
-    return `${gapText} · ${location} · nearest qualified OI walls inside ATM ±${WALL_SCAN_STRIKES}`;
+    return `${gapText} · ${location} · max PE/CE OI walls inside ATM ±${WALL_SCAN_STRIKES}`;
   }
 
   function interpretMarketStructure(input) {
@@ -1251,7 +1225,7 @@
       state: stateLabel,
       decision,
       tone,
-      headline: `${location} · ${microRange ? `${price(microRange.low, 0)}–${price(microRange.high, 0)} · ${microRange.minutes}m confirmed range` : `ATM ±${WALL_SCAN_STRIKES} active-wall read`}`,
+      headline: `${location} · ${microRange ? `${price(microRange.low, 0)}–${price(microRange.high, 0)} · ${microRange.minutes}m confirmed range` : `ATM ±${WALL_SCAN_STRIKES} max-OI wall read`}`,
       evidence,
       trigger,
       invalidation,

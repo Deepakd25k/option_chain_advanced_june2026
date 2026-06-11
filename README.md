@@ -4,7 +4,7 @@ Formula-backed intraday option-chain dashboard for Indian index option buyers. I
 
 ## Current Trading Surface
 
-- Market Structure Intelligence: one dynamic card detects opening location, nearest statistically qualified PE/CE OI clusters inside ATM ±11 strikes, confirmed ranges, support/resistance tests, and directional inventory pressure.
+- Market Structure Intelligence: one dynamic card detects opening location, highest single-strike PE/CE OI walls inside ATM ±11 strikes, confirmed ranges, support/resistance tests, and directional inventory pressure.
 - A range is confirmed only from completed 5m candles: up to 100 points wide, at least 20 minutes old, with repeated upper/lower interaction and direction changes.
 - Support, ATM, and resistance contracts show current OI/mid plus actual Open, 5m, 15m, and 30m OI and premium changes.
 - Material OI plus delta-adjusted premium residual classifies concise writing, long buildup, short covering, and long-unwinding behavior inside the same card.
