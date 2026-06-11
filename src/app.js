@@ -667,8 +667,8 @@
     return `
       <div class="structure-window">
         <span>${label}${windowRead.oiRank ? ` · #${windowRead.oiRank}/${windowRead.universeSize}` : ""}</span>
-        <strong class="${oiTone}">OI ${compact(windowRead.oiChange)}</strong>
-        <em class="${premiumTone}">Prem ${signed(windowRead.premiumChange)}</em>
+        <strong class="${oiTone}">OI ${compact(windowRead.oiChange)} (${signedPercent(windowRead.oiChangePct)})</strong>
+        <em class="${premiumTone}">Prem ${signed(windowRead.premiumChange)} (${signedPercent(windowRead.premiumChangePct)})</em>
       </div>
     `;
   }
@@ -892,6 +892,8 @@
 
     const premiumChange = currentOption.mid - reference.mid;
     const oiChange = currentOption.oi - reference.oi;
+    const oiChangePct = reference.oi ? oiChange / reference.oi : 0;
+    const premiumChangePct = reference.mid ? premiumChange / reference.mid : 0;
     const spotChange = latest.spot - reference.spot;
     const signedDelta = side === "CE" ? reference.delta : -reference.delta;
     const rawResidual = premiumChange - signedDelta * spotChange;
@@ -918,6 +920,8 @@
       available: true,
       oiChange,
       premiumChange,
+      oiChangePct,
+      premiumChangePct,
       residual,
       rawResidual,
       commonResidual,
@@ -2474,6 +2478,12 @@
 
   function pct(value) {
     return `${(number(value) * 100).toFixed(0)}%`;
+  }
+
+  function signedPercent(value) {
+    const numeric = number(value) * 100;
+    const sign = numeric > 0 ? "+" : "";
+    return `${sign}${numeric.toFixed(2)}%`;
   }
 
   function compact(value) {
