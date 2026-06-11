@@ -11,6 +11,7 @@
   const CALIBRATION_INTERVAL_MS = 30 * 1000;
   const SIGNAL_COOLDOWN_MS = 5 * 60 * 1000;
   const OUTCOME_TOLERANCE_MS = 45 * 1000;
+  const WALL_SCAN_STRIKES = 11;
   const STRUCTURE_WINDOWS = [
     { key: "open", label: "Open", seconds: null },
     { key: "300", label: "5m", seconds: 300 },
@@ -23,7 +24,7 @@
     candles5m: [],
     paused: false,
     timer: null,
-    atmFlowRange: clamp(Number(localStorage.getItem("atm_flow_range") || 0), 0, 3),
+    sessionHydrated: false,
     stable: {
       key: null,
       since: null,
@@ -67,7 +68,6 @@
       "activeWindow", "refreshInterval", "marketStructureCard", "structureHeadline", "structureOrigin",
       "structureState", "structureLocation", "structureTable", "structureEvidence", "structureDecision",
       "structureLevels", "structureStability", "matrixTable",
-      "atmFlowRange", "atmFlowSummaryChips", "atmFlowTable",
       "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable"
     ].forEach((id) => {
       el[id] = document.getElementById(id);
@@ -85,15 +85,6 @@
   function bindEvents() {
     el.refreshButton.addEventListener("click", refresh);
     el.pauseButton.addEventListener("click", togglePause);
-    el.atmFlowRange.addEventListener("click", (event) => {
-      const button = event.target.closest("button[data-range]");
-      if (!button) return;
-      state.atmFlowRange = clamp(Number(button.dataset.range), 0, 3);
-      localStorage.setItem("atm_flow_range", String(state.atmFlowRange));
-      updateAtmFlowRangeButtons();
-      const latest = lastSnapshot();
-      if (latest) renderAtmFlowWatch(latest);
-    });
     el.exportCalibration.addEventListener("click", exportCalibration);
     el.clearCalibration.addEventListener("click", clearCalibration);
     el.symbolSelect.addEventListener("change", async () => {
@@ -124,6 +115,7 @@
   function resetSessionState() {
     state.history = [];
     state.candles5m = [];
+    state.sessionHydrated = false;
     state.stable = { key: null, since: null, confirmations: 0 };
     state.structureRead = null;
     state.structureStability = { key: null, since: null, windows: 0, lastWindowEnd: null };
@@ -213,6 +205,7 @@
       (payload.snapshots || []).forEach((storedPayload) => {
         addSnapshot(normalizeSnapshot(storedPayload));
       });
+      state.sessionHydrated = state.history.length > 0;
       updateRecorderStatus({
         configured: payload.configured,
         snapshotCount: number(payload.snapshotCount),
@@ -444,7 +437,6 @@
     }
     saveCalibrationState();
     renderMarketStructure(structureRead);
-    renderAtmFlowWatch(latest);
     renderMatrix();
     renderCalibrationLab();
     renderOutcomeTable();
@@ -627,8 +619,8 @@
     el.structureState.textContent = read.state;
     el.structureLocation.innerHTML = [
       `<span>Spot <strong>${price(read.spot)}</strong></span>`,
-      `<span>Support <strong>${read.support ? price(read.support, 0) : "Building"}</strong></span>`,
-      `<span>Resistance <strong>${read.resistance ? price(read.resistance, 0) : "Building"}</strong></span>`,
+      `<span>Strong Support <strong>${read.support ? `${price(read.support, 0)} · ${compact(read.supportWall.clusterOi)}` : "Building"}</strong></span>`,
+      `<span>Strong Resistance <strong>${read.resistance ? `${price(read.resistance, 0)} · ${compact(read.resistanceWall.clusterOi)}` : "Building"}</strong></span>`,
       `<span>${read.microRange ? `Range <strong>${price(read.microRange.low, 0)}–${price(read.microRange.high, 0)}</strong>` : "Range <strong>Not confirmed</strong>"}</span>`
     ].join("");
     el.structureTable.innerHTML = `
@@ -648,7 +640,7 @@
       ? `Trigger ${price(read.trigger)} · Invalid ${price(read.invalidation)}`
       : "Trigger and invalidation will appear after a directional structure qualifies";
     el.structureStability.textContent = read.stability.windows
-      ? `Stable ${read.stability.windows} completed 5m window${read.stability.windows === 1 ? "" : "s"}`
+      ? `${read.stability.restored ? "DB restored · " : ""}Stable ${read.stability.windows} completed 5m window${read.stability.windows === 1 ? "" : "s"}`
       : "Completed 5m confirmation building";
   }
 
@@ -659,6 +651,7 @@
           <span>${escapeHtml(contract.role)}</span>
           <strong>${price(contract.strike, 0)} ${contract.side}</strong>
           <em>OI ${compact(contract.currentOi)} · Mid ${price(contract.currentPremium)}</em>
+          <b class="structure-inventory ${contract.inventory.tone}">${escapeHtml(contract.inventory.label)}</b>
         </div>
         ${STRUCTURE_WINDOWS.map((item) => structureWindowCell(contract.windows[item.key], item.label)).join("")}
       </div>
@@ -673,7 +666,7 @@
     const premiumTone = windowRead.premiumChange > 0 ? "positive" : windowRead.premiumChange < 0 ? "negative" : "muted";
     return `
       <div class="structure-window">
-        <span>${label}${windowRead.oiRank ? ` · #${windowRead.oiRank}/7` : ""}</span>
+        <span>${label}${windowRead.oiRank ? ` · #${windowRead.oiRank}/${windowRead.universeSize}` : ""}</span>
         <strong class="${oiTone}">OI ${compact(windowRead.oiChange)}</strong>
         <em class="${premiumTone}">Prem ${signed(windowRead.premiumChange)}</em>
       </div>
@@ -753,8 +746,8 @@
     const isSupport = side === "PE";
     const candidates = rows.filter((row) => (
       isSupport
-        ? row.strike <= spot && spot - row.strike <= step * 5
-        : row.strike >= spot && row.strike - spot <= step * 5
+        ? row.strike <= spot && spot - row.strike <= step * WALL_SCAN_STRIKES
+        : row.strike >= spot && row.strike - spot <= step * WALL_SCAN_STRIKES
     )).map((row) => {
       const adjacentStrike = row.strike + (isSupport ? -step : step);
       const adjacent = rows.find((item) => item.strike === adjacentStrike);
@@ -772,7 +765,11 @@
     return {
       ...candidates[0],
       significant: candidates[0].clusterOi >= center + mad,
-      secondClusterOi: candidates[1] ? candidates[1].clusterOi : 0
+      secondClusterOi: candidates[1] ? candidates[1].clusterOi : 0,
+      scannedStrikes: candidates.length,
+      dominance: candidates[1] && candidates[1].clusterOi
+        ? candidates[0].clusterOi / candidates[1].clusterOi
+        : 1
     };
   }
 
@@ -822,14 +819,58 @@
       windows[item.key] = buildStructureWindow(latest, openingSnapshots, definition.strike, definition.side, item.seconds);
     });
     const flow = readContractFlow(windows);
+    const inventory = classifyStructureInventory(windows, definition.side);
     return {
       ...definition,
       currentOi: option ? option.oi : 0,
       currentPremium: option ? option.mid : 0,
       windows,
       flow,
+      inventory,
       tone: structureContractTone(definition.side, flow.state)
     };
+  }
+
+  function classifyStructureInventory(windows, side) {
+    const recent = windows["300"];
+    const medium = windows["900"];
+    if (!recent || !recent.available) {
+      return { label: "Flow building", type: "building", tone: "neutral" };
+    }
+    const recentRead = inventoryWindowRead(recent, side);
+    if (!recentRead.clean) {
+      return { label: "No clean 5m flow", type: "mixed", tone: "neutral" };
+    }
+    const mediumRead = medium && medium.available ? inventoryWindowRead(medium, side) : null;
+    const sustained = mediumRead && mediumRead.clean && mediumRead.type === recentRead.type;
+    return {
+      ...recentRead,
+      label: `${sustained ? "Sustained " : "5m "}${recentRead.label}`
+    };
+  }
+
+  function inventoryWindowRead(windowRead, side) {
+    if (!windowRead.materialOi || !windowRead.materialResidual) {
+      return { clean: false, label: "Mixed", type: "mixed", tone: "neutral" };
+    }
+    const oiUp = windowRead.oiChange > 0;
+    const premiumUp = windowRead.residual > 0;
+    let type = "long-unwind";
+    let label = "Long unwind";
+    if (oiUp && premiumUp) {
+      type = "long-build";
+      label = "Long build";
+    } else if (oiUp && !premiumUp) {
+      type = "writing";
+      label = "Writing";
+    } else if (!oiUp && premiumUp) {
+      type = "covering";
+      label = "Short covering";
+    }
+    const bullish = side === "CE"
+      ? type === "long-build" || type === "covering"
+      : type === "writing" || type === "long-unwind";
+    return { clean: true, label: `${side} ${label}`, type, tone: bullish ? "positive" : "negative" };
   }
 
   function structureContractTone(side, flowState) {
@@ -881,6 +922,7 @@
       rawResidual,
       commonResidual,
       oiRank: oiRank > 0 ? oiRank : null,
+      universeSize: universe.length,
       materialOi: Math.abs(oiChange) > 0 && Math.abs(oiChange) >= oiCenter + oiMad,
       materialResidual: Math.abs(residual) > 0 && Math.abs(residual) >= residualCenter + residualMad
     };
@@ -888,7 +930,10 @@
 
   function structureWindowUniverse(latest, openingSnapshots, side, seconds) {
     const atmIndex = latest.rows.findIndex((row) => row.strike === latest.atmStrike);
-    return latest.rows.slice(Math.max(0, atmIndex - 3), atmIndex + 4).map((row) => {
+    return latest.rows.slice(
+      Math.max(0, atmIndex - WALL_SCAN_STRIKES),
+      atmIndex + WALL_SCAN_STRIKES + 1
+    ).map((row) => {
       const reference = seconds === null
         ? openingOptionReference(openingSnapshots, row.strike, side)
         : snapshotOptionReference(getOlderSnapshot(seconds), row.strike, side);
@@ -1008,7 +1053,7 @@
     else if (openingSpot > resistanceWall.strike) location = `Opened above ${price(resistanceWall.strike, 0)} resistance`;
     else if (supportDistance <= nearDistance && supportDistance <= resistanceDistance) location = `Opened near ${price(supportWall.strike, 0)} support`;
     else if (resistanceDistance <= nearDistance) location = `Opened near ${price(resistanceWall.strike, 0)} resistance`;
-    return `${gapText} · ${location}`;
+    return `${gapText} · ${location} · strongest clusters from ATM ±${WALL_SCAN_STRIKES}`;
   }
 
   function interpretMarketStructure(input) {
@@ -1143,16 +1188,28 @@
         ? microRange ? microRange.high : resistance ? resistance + step / 2 : 0
         : 0;
     const evidence = [
-      { label: "Support PE", value: `${supportFlow.state} · premium ${supportPremium.toLowerCase()}`, tone: evidenceTone(supportAdding, supportWithdrawing) },
-      { label: "ATM Flow", value: `PE ${atmPe ? atmPe.flow.state.toLowerCase() : "building"} · CE ${atmCe ? atmCe.flow.state.toLowerCase() : "building"}`, tone: evidenceTone(atmPeAdding || atmCeWithdrawing, atmPeWithdrawing || atmCeAdding) },
-      { label: "Resistance CE", value: `${resistanceFlow.state} · premium ${resistancePremium.toLowerCase()}`, tone: evidenceTone(resistanceWithdrawing, resistanceAdding) }
+      {
+        label: "Support PE",
+        value: `${supportPe ? supportPe.inventory.label : "Flow building"} · ${supportFlow.state.toLowerCase()} · premium ${supportPremium.toLowerCase()}`,
+        tone: supportPe ? supportPe.inventory.tone : "neutral"
+      },
+      {
+        label: "ATM Inventory",
+        value: `${atmPe ? atmPe.inventory.label : "PE building"} · ${atmCe ? atmCe.inventory.label : "CE building"}`,
+        tone: evidenceTone(atmPeAdding || atmCeWithdrawing, atmPeWithdrawing || atmCeAdding)
+      },
+      {
+        label: "Resistance CE",
+        value: `${resistanceCe ? resistanceCe.inventory.label : "Flow building"} · ${resistanceFlow.state.toLowerCase()} · premium ${resistancePremium.toLowerCase()}`,
+        tone: resistanceCe ? resistanceCe.inventory.tone : "neutral"
+      }
     ];
     const supportFive = supportPe && supportPe.windows["300"].available ? supportPe.windows["300"] : null;
     return {
       state: stateLabel,
       decision,
       tone,
-      headline: `${location} · ${microRange ? `${microRange.minutes}m rotation` : "live OI wall read"}`,
+      headline: `${location} · ${microRange ? `${microRange.minutes}m rotation` : `ATM ±${WALL_SCAN_STRIKES} strongest-wall read`}`,
       evidence,
       trigger,
       invalidation,
@@ -1187,7 +1244,18 @@
     const lastWindowEnd = candles.length ? candles[candles.length - 1].end : Math.floor(latest.time / 300000) * 300000;
     const key = `${read.state}:${read.decision}:${read.support}:${read.resistance}`;
     if (state.structureStability.key !== key) {
-      state.structureStability = { key, since: latest.time, windows: 0, lastWindowEnd };
+      const restored = state.structureStability.key === null
+        && state.sessionHydrated
+        && Boolean(getOlderSnapshot(900))
+        && Boolean(read.supportWall && read.supportWall.stable)
+        && Boolean(read.resistanceWall && read.resistanceWall.stable);
+      state.structureStability = {
+        key,
+        since: restored ? latest.time - 10 * 60 * 1000 : latest.time,
+        windows: restored ? 2 : 0,
+        lastWindowEnd,
+        restored
+      };
     } else if (lastWindowEnd > state.structureStability.lastWindowEnd) {
       state.structureStability.windows += 1;
       state.structureStability.lastWindowEnd = lastWindowEnd;
@@ -1270,297 +1338,6 @@
     el.atmIv.textContent = `${price(latest.atmIv)}%`;
     el.atmStraddle.textContent = price(latest.atmStraddle);
     el.pcrValue.textContent = ratio(latest.pcr);
-  }
-
-  function renderAtmFlowWatch(latest) {
-    updateAtmFlowRangeButtons();
-    const atmIndex = latest.rows.findIndex((row) => row.strike === latest.atmStrike);
-    const range = state.atmFlowRange;
-    const start = Math.max(0, atmIndex - range);
-    const end = Math.min(latest.rows.length, atmIndex + range + 1);
-    const rows = latest.rows.slice(start, end);
-    const windows = atmFlowWindows();
-    const models = windows.map((windowItem) => {
-      const older = getOlderSnapshot(windowItem.seconds);
-      const flowRows = rows.map((row) => buildAtmFlowRow(latest, older, row));
-      return {
-        ...windowItem,
-        available: Boolean(older && older !== latest),
-        rows: flowRows,
-        summary: summarizeAtmFlow(flowRows)
-      };
-    });
-    el.atmFlowSummaryChips.innerHTML = models.map((model) => `
-      <div class="atm-flow-chip ${model.summary.tone}" title="${escapeHtml(model.summary.reason)}">
-        <span>${model.label}</span>
-        <strong>${escapeHtml(model.summary.bias)}</strong>
-        <em>CE ${compact(model.summary.ceOiTotal)} / PE ${compact(model.summary.peOiTotal)}</em>
-      </div>
-    `).join("");
-
-    const tbody = el.atmFlowTable.querySelector("tbody");
-    tbody.innerHTML = rows.map((row, index) => {
-      const isAtm = row.strike === latest.atmStrike;
-      return `
-      <tr class="${isAtm ? "atm-row" : ""}">
-        <td class="strike-cell"><strong>${price(row.strike, 0)}</strong>${isAtm ? '<span class="atm-badge">ATM</span>' : ""}</td>
-        ${models.map((model) => atmFlowCell(model.rows[index])).join("")}
-      </tr>
-    `;
-    }).join("");
-  }
-
-  function renderPreSignalLine(models) {
-    const preSignal = buildPreSignalRead(models);
-    el.preSignalLine.className = `pre-signal-line ${preSignal.tone}`;
-    el.preSignalLine.innerHTML = `
-      <span>Pre-Signal</span>
-      <strong>${escapeHtml(preSignal.state)} · ${preSignal.confidence}%</strong>
-      <em>${escapeHtml(preSignal.agreement)} · ${escapeHtml(preSignal.reason)} · ${escapeHtml(preSignal.trigger)}</em>
-    `;
-  }
-
-  function buildPreSignalRead(models) {
-    const scored = models.filter((model) => model.available).map((model) => ({
-      label: model.label,
-      direction: model.summary.bias,
-      score: model.summary.score,
-      reason: model.summary.reason
-    }));
-    if (scored.length < 3) {
-      return {
-        state: "Building History",
-        confidence: 0,
-        agreement: `${scored.length}/5 windows ready`,
-        reason: "waiting for exact rolling baselines",
-        trigger: "Trigger: at least 3 valid windows",
-        tone: "muted"
-      };
-    }
-    const bullish = scored.filter((item) => item.direction === "Bullish").length;
-    const bearish = scored.filter((item) => item.direction === "Bearish").length;
-    const mixed = scored.length - bullish - bearish;
-    const totalScore = sum(scored, (item) => item.score);
-    const dominant = bullish > bearish ? "Bullish" : bearish > bullish ? "Bearish" : "Mixed";
-    const dominantCount = Math.max(bullish, bearish);
-    const agreement = dominant === "Mixed"
-      ? `${mixed}/${scored.length} mixed`
-      : `${dominantCount}/${scored.length} ${dominant.toLowerCase()}`;
-    const confidence = clamp(Math.round((dominantCount / scored.length) * 60 + Math.min(Math.abs(totalScore), 18) * 2), 0, 95);
-    const latest = scored.find((item) => item.label === "5m") || scored[0];
-    const reason = latest ? latest.reason : "flow building";
-
-    if (dominant === "Bullish" && dominantCount >= 3) {
-      return {
-        state: "Bullish Build",
-        confidence,
-        agreement,
-        reason,
-        trigger: "Trigger: CE response + price hold",
-        tone: "positive"
-      };
-    }
-
-    if (dominant === "Bearish" && dominantCount >= 3) {
-      return {
-        state: "Bearish Build",
-        confidence,
-        agreement,
-        reason,
-        trigger: "Trigger: PE response + support break",
-        tone: "negative"
-      };
-    }
-
-    return {
-      state: "Mixed / Wait",
-      confidence,
-      agreement,
-      reason,
-      trigger: "Trigger: wait for flow alignment",
-      tone: "muted"
-    };
-  }
-
-  function updateAtmFlowRangeButtons() {
-    el.atmFlowRange.querySelectorAll("button[data-range]").forEach((button) => {
-      button.classList.toggle("active", Number(button.dataset.range) === state.atmFlowRange);
-    });
-  }
-
-  function atmFlowWindows() {
-    return [
-      { key: "open", label: "Open", seconds: null },
-      { key: "300", label: "5m", seconds: 300 },
-      { key: "600", label: "10m", seconds: 600 },
-      { key: "900", label: "15m", seconds: 900 },
-      { key: "1800", label: "30m", seconds: 1800 }
-    ];
-  }
-
-  function atmFlowCell(item) {
-    return `
-      <td class="atm-flow-cell">
-        <div class="flow-line ${item.ce.tone}">
-          <span>CE ${flowCode(item.ce)}</span>
-          <strong>${compact(item.ce.oiChange)}</strong>
-          <em>${signed(item.ce.priceChange)}</em>
-        </div>
-        <div class="flow-line ${item.pe.tone}">
-          <span>PE ${flowCode(item.pe)}</span>
-          <strong>${compact(item.pe.oiChange)}</strong>
-          <em>${signed(item.pe.priceChange)}</em>
-        </div>
-      </td>
-    `;
-  }
-
-  function buildAtmFlowRow(latest, older, row) {
-    const olderRow = older ? older.rows.find((item) => item.strike === row.strike) : null;
-    return {
-      strike: row.strike,
-      isAtm: row.strike === latest.atmStrike,
-      ce: classifyAtmSideFlow(row.ce, olderRow ? olderRow.ce : null, "CE"),
-      pe: classifyAtmSideFlow(row.pe, olderRow ? olderRow.pe : null, "PE")
-    };
-  }
-
-  function classifyAtmSideFlow(option, olderOption, side) {
-    if (!option || !olderOption || option === olderOption) {
-      return {
-        side,
-        title: "Building",
-        shortTitle: "Build",
-        tone: "neutral",
-        score: 0,
-        priceChange: 0,
-        oiChange: 0
-      };
-    }
-
-    const priceChange = option.ltp - olderOption.ltp;
-    const oiChange = option.oi - olderOption.oi;
-    const enoughOi = Math.abs(oiChange) >= Math.max(25000, olderOption.oi * 0.008);
-    const enoughPrice = Math.abs(priceChange) >= Math.max(0.5, option.ltp * 0.004);
-    const spreadOk = option.spreadPct <= 0.03;
-    const liquid = option.volume >= 15000 || option.oi >= 75000;
-    const flow = nameOptionFlow(side, priceChange, oiChange);
-    const score = flowScore(side, flow.title);
-
-    if (!enoughOi || !enoughPrice || !spreadOk || !liquid) {
-      return {
-        side,
-        title: "Noise / wait",
-        shortTitle: "Noise",
-        tone: "neutral",
-        score: 0,
-        priceChange,
-        oiChange
-      };
-    }
-
-    return {
-      side,
-      title: flow.title,
-      shortTitle: shortFlowTitle(flow.title),
-      tone: flow.tone,
-      score,
-      priceChange,
-      oiChange
-    };
-  }
-
-  function summarizeAtmFlow(rows) {
-    const ceOiTotal = sum(rows, (row) => row.ce.oiChange);
-    const peOiTotal = sum(rows, (row) => row.pe.oiChange);
-    const cePremTotal = sum(rows, (row) => row.ce.priceChange);
-    const pePremTotal = sum(rows, (row) => row.pe.priceChange);
-    const score = sum(rows, (row) => row.ce.score + row.pe.score);
-    const ceCounts = countFlowTitles(rows.map((row) => row.ce));
-    const peCounts = countFlowTitles(rows.map((row) => row.pe));
-    const ceReason = dominantFlowText("CE", ceCounts);
-    const peReason = dominantFlowText("PE", peCounts);
-
-    if (score >= 4) {
-      return {
-        title: "ATM Flow: Bullish PE pressure",
-        tone: "positive",
-        bias: "Bullish",
-        score,
-        reason: `${peReason}; ${ceReason}`,
-        ceOiTotal,
-        peOiTotal,
-        cePremTotal,
-        pePremTotal
-      };
-    }
-
-    if (score <= -4) {
-      return {
-        title: "ATM Flow: Bearish CE pressure",
-        tone: "negative",
-        bias: "Bearish",
-        score,
-        reason: `${ceReason}; ${peReason}`,
-        ceOiTotal,
-        peOiTotal,
-        cePremTotal,
-        pePremTotal
-      };
-    }
-
-    return {
-      title: "ATM Flow: Mixed / wait",
-      tone: "muted",
-      bias: "Mixed",
-      score,
-      reason: `${ceReason}; ${peReason}`,
-      ceOiTotal,
-      peOiTotal,
-      cePremTotal,
-      pePremTotal
-    };
-  }
-
-  function flowScore(side, title) {
-    if (title.includes("long buildup")) return side === "CE" ? 2 : -2;
-    if (title.includes("writing")) return side === "CE" ? -2 : 2;
-    if (title.includes("short covering")) return side === "CE" ? 2 : -2;
-    if (title.includes("long unwinding")) return side === "CE" ? -1 : 1;
-    return 0;
-  }
-
-  function shortFlowTitle(title) {
-    if (title.includes("long buildup")) return "Long build";
-    if (title.includes("writing")) return "Writing";
-    if (title.includes("short covering")) return "Covering";
-    if (title.includes("long unwinding")) return "Unwind";
-    return "Neutral";
-  }
-
-  function flowCode(flow) {
-    if (flow.shortTitle === "Long build") return "LB";
-    if (flow.shortTitle === "Covering") return "C";
-    if (flow.shortTitle === "Writing") return "W";
-    if (flow.shortTitle === "Unwind") return "U";
-    if (flow.shortTitle === "Noise") return "N";
-    if (flow.shortTitle === "Build") return "…";
-    return "N";
-  }
-
-  function countFlowTitles(flows) {
-    return flows.reduce((counts, flow) => {
-      counts[flow.shortTitle] = (counts[flow.shortTitle] || 0) + 1;
-      return counts;
-    }, {});
-  }
-
-  function dominantFlowText(side, counts) {
-    const entries = Object.entries(counts)
-      .filter(([name]) => name !== "Noise" && name !== "Build")
-      .sort((a, b) => b[1] - a[1]);
-    if (!entries.length) return `${side}: no clean flow`;
-    return `${side}: ${entries.slice(0, 2).map(([name, count]) => `${count} ${name}`).join(", ")}`;
   }
 
   function renderMatrix() {

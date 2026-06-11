@@ -4,12 +4,12 @@ Formula-backed intraday option-chain dashboard for Indian index option buyers. I
 
 ## Current Trading Surface
 
-- Market Structure Intelligence: one dynamic card detects opening location, stable PE/CE OI walls, micro-ranges, support/resistance tests, and directional inventory pressure.
+- Market Structure Intelligence: one dynamic card detects opening location, the strongest stable PE/CE OI clusters inside ATM ±11 strikes, micro-ranges, support/resistance tests, and directional inventory pressure.
 - Support, ATM, and resistance contracts show current OI/mid plus actual Open, 5m, 15m, and 30m OI and premium changes.
+- Material OI plus delta-adjusted premium residual classifies concise writing, long buildup, short covering, and long-unwinding behavior inside the same card.
 - Premium confirmation uses bid/ask midpoint, starting-delta adjustment, and common CE/PE volatility removal instead of raw LTP direction alone.
 - Auto expiry fetch from Upstox option contracts; nearest expiry is selected automatically.
 - Index selector includes NIFTY50, BANKNIFTY, FINNIFTY, and SENSEX.
-- ATM Flow Matrix: Open, 5m, 10m, 15m, and 30m CE/PE OI plus premium behaviour.
 - Timeframe matrix: 1m, 3m, 5m, 15m, 30m, and since-open comparison.
 - Calibration Lab: browser-local session recorder, 3m/5m/10m outcome tracking, and threshold suggestions.
 - Outcome Tracker and Formula Rulebook stay collapsed until opened.

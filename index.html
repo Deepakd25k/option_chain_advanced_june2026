@@ -79,37 +79,6 @@
             </div>
           </article>
 
-          <article class="panel span-2 atm-flow-card">
-            <div class="panel-heading">
-              <div>
-                <p class="eyebrow">ATM Flow Matrix</p>
-                <h2>Open, 5m, 10m, 15m, 30m CE/PE OI + premium behaviour</h2>
-              </div>
-              <div class="range-control" id="atmFlowRange" aria-label="ATM strike range">
-                <button type="button" data-range="0" class="active">ATM</button>
-                <button type="button" data-range="1">±1</button>
-                <button type="button" data-range="2">±2</button>
-                <button type="button" data-range="3">±3</button>
-              </div>
-            </div>
-            <div class="atm-flow-strip" id="atmFlowSummaryChips"></div>
-            <div class="mini-table-wrap">
-              <table class="atm-flow-matrix" id="atmFlowTable">
-                <thead>
-                  <tr>
-                    <th>Strike</th>
-                    <th>Open</th>
-                    <th>5m</th>
-                    <th>10m</th>
-                    <th>15m</th>
-                    <th>30m</th>
-                  </tr>
-                </thead>
-                <tbody></tbody>
-              </table>
-            </div>
-          </article>
-
           <article class="panel span-2">
             <div class="panel-heading">
               <div>
@@ -192,8 +161,8 @@
               </div>
               <div>
                 <strong>Stable OI Walls</strong>
-                <code>support = strongest PE strike + next lower PE cluster</code>
-                <code>CE wall uses next higher CE; near zone = strike ± half interval; median + deviation required</code>
+                <code>scan = ATM ±11 strikes; support = strongest PE strike + next lower PE cluster</code>
+                <code>resistance = strongest CE strike + next higher CE; median + deviation and completed-window persistence required</code>
               </div>
               <div>
                 <strong>Actual Changes</strong>
@@ -204,6 +173,7 @@
                 <strong>Premium Confirmation</strong>
                 <code>mid = valid bid/ask midpoint, otherwise LTP fallback</code>
                 <code>side residual removes starting-delta move and common CE/PE volatility effect</code>
+                <code>material OI + material residual classifies writing, buildup, covering, or unwind</code>
               </div>
             </div>
           </details>

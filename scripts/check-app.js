@@ -23,14 +23,23 @@ if (missing.length) {
 }
 
 const html = fs.readFileSync(path.resolve(__dirname, "..", "index.html"), "utf8");
-for (const id of ["marketStructureCard", "structureHeadline", "structureTable", "structureEvidence", "matrixTable", "atmFlowTable", "outcomeTable"]) {
+for (const id of ["marketStructureCard", "structureHeadline", "structureTable", "structureEvidence", "matrixTable", "outcomeTable"]) {
   if (!html.includes(`id="${id}"`)) {
     console.error(`Missing DOM id: ${id}`);
     process.exit(1);
   }
 }
 
+if (html.includes("ATM Flow Matrix") || html.includes('id="atmFlowTable"')) {
+  console.error("ATM Flow Matrix should be fully removed");
+  process.exit(1);
+}
+
 const app = fs.readFileSync(path.resolve(__dirname, "..", "src/app.js"), "utf8");
+if (app.includes("renderAtmFlowWatch") || app.includes("atmFlowRange")) {
+  console.error("Legacy ATM Flow Matrix code should be fully removed");
+  process.exit(1);
+}
 const calibrationGuards = [
   "const CALIBRATION_VERSION = 3",
   "latest.source !== \"live\"",
@@ -39,6 +48,9 @@ const calibrationGuards = [
   "buildMarketStructureRead(latest)",
   "openingBaselineSnapshots(latest)",
   "buildStructureWindow(latest, openingSnapshots",
+  "const WALL_SCAN_STRIKES = 11",
+  "classifyStructureInventory(windows, definition.side)",
+  "state.sessionHydrated",
   "supportAdding && resistanceWithdrawing",
   "resistanceAdding && supportWithdrawing",
   "setupAlreadyTracked",
