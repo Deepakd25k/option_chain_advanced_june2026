@@ -4,6 +4,7 @@ const path = require("path");
 const optionChainHandler = require("../api/upstox/option-chain");
 const expiriesHandler = require("../api/upstox/expiries");
 const sessionHistoryHandler = require("../api/session/history");
+const sessionPlaybookHandler = require("../api/session/playbook");
 const cronCaptureHandler = require("../api/cron/capture");
 
 const root = path.resolve(__dirname, "..");
@@ -59,6 +60,13 @@ const server = http.createServer(async (req, res) => {
     req.query = Object.fromEntries(url.searchParams.entries());
     attachResponseHelpers(res);
     await sessionHistoryHandler(req, res);
+    return;
+  }
+
+  if (url.pathname === "/api/session/playbook") {
+    req.query = Object.fromEntries(url.searchParams.entries());
+    attachResponseHelpers(res);
+    await sessionPlaybookHandler(req, res);
     return;
   }
 

@@ -15,3 +15,18 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
 
 CREATE INDEX IF NOT EXISTS market_snapshots_lookup_idx
 ON market_snapshots (session_date, instrument_key, expiry_date, captured_at);
+
+CREATE TABLE IF NOT EXISTS session_playbooks (
+  id BIGSERIAL PRIMARY KEY,
+  session_date DATE NOT NULL,
+  instrument_key TEXT NOT NULL,
+  expiry_date DATE NOT NULL,
+  formula_version TEXT NOT NULL,
+  fingerprint JSONB NOT NULL,
+  playbook JSONB NOT NULL,
+  generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (session_date, instrument_key, expiry_date, formula_version)
+);
+
+CREATE INDEX IF NOT EXISTS session_playbooks_lookup_idx
+ON session_playbooks (instrument_key, session_date DESC);

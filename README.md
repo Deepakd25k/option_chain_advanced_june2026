@@ -93,6 +93,18 @@ The Market Structure card also compares material five-minute option inventory wi
 
 The narrative is an inferred market-mechanics explanation, not proof of an external news or event-driven cause.
 
+### Session Memory & Tomorrow Playbook
+
+After a completed market session, `/api/session/playbook` builds and stores a versioned post-market read from DB data:
+
+- uses the last actual snapshot saved in each five-minute bucket; it does not interpolate or median-combine the playbook inputs
+- resolves support and resistance with the same ATM ±11 highest single-strike PE/CE OI rule used by Market Structure Intelligence
+- preserves the actual confirmed trailing range width when it is at most 100 points; without a qualified range it does not invent a choppy zone
+- creates five conditional opening-location scenarios with explicit fresh-5m OI activation and invalidation rules
+- stores a categorical fingerprint and reports only exact prior matches; it never creates a historical probability from insufficient samples
+
+The card appears immediately below Formula Rulebook. It is a next-session preparation aid, not a guaranteed direction forecast.
+
 ### Recording While The Dashboard Is Closed
 
 The protected endpoint `/api/cron/capture` records NIFTY50, BANKNIFTY, FINNIFTY, and SENSEX. Add this Vercel environment variable:

@@ -34,6 +34,8 @@
     },
     signalStartSnapshot: null,
     structureRead: null,
+    sessionPlaybook: null,
+    playbookLastChecked: 0,
     structureStability: {
       key: null,
       since: null,
@@ -61,6 +63,7 @@
     await loadExpiries();
     await hydrateSessionHistory();
     await refresh();
+    await loadSessionPlaybook();
     scheduleNext();
   }
 
@@ -71,7 +74,9 @@
       "structureState", "structureLocation", "structureTable", "structureEvidence", "structureDecision",
       "structureLevels", "structureStability", "pressureHeadline", "pressureVerdict", "pressureMetrics",
       "pressureNarrative", "matrixTable",
-      "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable"
+      "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable", "sessionMemoryCard",
+      "memoryHeadline", "memoryMeta", "memoryStatus", "memoryLearning", "memoryMapTitle",
+      "memoryHistory", "memoryScenarios", "memoryFooter"
     ].forEach((id) => {
       el[id] = document.getElementById(id);
     });
@@ -96,6 +101,7 @@
       await loadExpiries();
       await hydrateSessionHistory();
       await refresh();
+      await loadSessionPlaybook();
       scheduleNext();
     });
     el.expiryInput.addEventListener("change", async () => {
@@ -103,6 +109,7 @@
       resetSessionState();
       await hydrateSessionHistory();
       await refresh();
+      await loadSessionPlaybook();
       scheduleNext();
     });
     [el.symbolSelect, el.expiryInput, el.activeWindow, el.refreshInterval].forEach((control) => {
@@ -121,6 +128,8 @@
     state.sessionHydrated = false;
     state.stable = { key: null, since: null, confirmations: 0 };
     state.structureRead = null;
+    state.sessionPlaybook = null;
+    state.playbookLastChecked = 0;
     state.structureStability = { key: null, since: null, windows: 0, lastWindowEnd: null };
     state.signalStartSnapshot = null;
     state.recorder.snapshotCount = 0;
@@ -175,6 +184,7 @@
       addSnapshot(snapshot);
       updateRecorderFromSave(payload.recorder, snapshot.time);
       render();
+      maybeRefreshSessionPlaybook(snapshot.time);
       setSource(`${payload.source === "live" ? "Live Upstox REST" : "Demo mode"} · ${formatTime(snapshot.time)} · ${state.history.length} loaded`);
     } catch (error) {
       setSource(`Data error: ${error.message}`);
@@ -230,6 +240,85 @@
         message: error.name === "TimeoutError" ? "Database history request timed out" : error.message
       });
     }
+  }
+
+  async function loadSessionPlaybook() {
+    state.playbookLastChecked = Date.now();
+    try {
+      const params = new URLSearchParams({ instrument_key: el.symbolSelect.value });
+      const response = await fetch(`/api/session/playbook?${params.toString()}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(API_TIMEOUT_MS)
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to load session playbook");
+      state.sessionPlaybook = payload.ready ? payload.playbook : null;
+      renderSessionPlaybook(payload.reason || "");
+    } catch (error) {
+      state.sessionPlaybook = null;
+      renderSessionPlaybook(error.name === "TimeoutError" ? "Playbook request timed out" : error.message);
+    }
+  }
+
+  function maybeRefreshSessionPlaybook(time) {
+    if (isMarketSessionIst(time)) return;
+    if (Date.now() - state.playbookLastChecked < 5 * 60 * 1000) return;
+    loadSessionPlaybook();
+  }
+
+  function renderSessionPlaybook(reason = "") {
+    const playbook = state.sessionPlaybook;
+    if (!playbook) {
+      el.memoryHeadline.textContent = "Waiting for a completed DB session";
+      el.memoryMeta.textContent = reason || "Exact post-market learning will appear after the session closes.";
+      el.memoryStatus.textContent = "BUILDING";
+      el.memoryStatus.className = "memory-status building";
+      el.memoryLearning.innerHTML = [
+        ["Today learned", "Completed session required"],
+        ["Why it moved", "Exact wall flow required"],
+        ["What was not proven", "No inference yet"]
+      ].map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
+      el.memoryScenarios.innerHTML = "";
+      el.memoryHistory.textContent = "Historical memory building";
+      el.memoryFooter.textContent = "No direction is assigned before fresh 5m OI confirms or rejects the inherited levels.";
+      return;
+    }
+
+    const closing = playbook.closing;
+    const memory = playbook.historicalMemory;
+    const quality = playbook.dataQuality;
+    el.memoryHeadline.textContent = `${playbook.sessionDate} close · ${price(closing.support.strike, 0)} support · ${price(closing.resistance.strike, 0)} resistance`;
+    el.memoryMeta.textContent = `${quality.exactFiveMinuteSnapshots} exact 5m snapshots · ${quality.gaps} gaps · expiry ${playbook.expiryDate}`;
+    const memoryStatus = quality.status === "COMPLETE" ? memory.evidence : "PARTIAL DATA";
+    el.memoryStatus.textContent = memoryStatus;
+    el.memoryStatus.className = `memory-status ${memoryStatus === "CALIBRATABLE" ? "ready" : "building"}`;
+    el.memoryLearning.innerHTML = [
+      ["Today learned", playbook.story.learning],
+      ["Why it moved", playbook.story.driver],
+      ["What was not proven", playbook.story.failed]
+    ].map(([label, value]) => `
+      <div>
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(value)}</strong>
+      </div>
+    `).join("");
+    el.memoryMapTitle.textContent = closing.confirmedRange
+      ? `Actual choppy enclosure ${price(closing.confirmedRange.low, 0)}–${price(closing.confirmedRange.high, 0)} · ${price(closing.confirmedRange.width, 0)} pts`
+      : "No choppy range pre-assigned · opening OI must establish one";
+    el.memoryHistory.textContent = `${memory.exactMatchCount} exact pattern match${memory.exactMatchCount === 1 ? "" : "es"} / ${memory.reviewedSessions} stored sessions`;
+    el.memoryScenarios.innerHTML = playbook.scenarios.map((scenario) => `
+      <article class="memory-scenario ${scenario.key}">
+        <span>${escapeHtml(scenario.zone)}</span>
+        <strong>${escapeHtml(scenario.title)}</strong>
+        <p>${escapeHtml(scenario.read)}</p>
+        <dl>
+          <dt>Activate</dt><dd>${escapeHtml(scenario.activation)}</dd>
+          <dt>Invalid</dt><dd>${escapeHtml(scenario.invalidation)}</dd>
+        </dl>
+      </article>
+    `).join("");
+    const matchDates = memory.exactMatchDates.length ? ` Exact prior dates: ${memory.exactMatchDates.join(", ")}.` : " No exact prior fingerprint is stored yet.";
+    el.memoryFooter.textContent = `Formula ${playbook.formulaVersion}. Levels use the same ATM ±11 max-OI walls as Market Structure Intelligence.${matchDates}`;
   }
 
   function updateRecorderFromSave(recorder, snapshotTime) {
