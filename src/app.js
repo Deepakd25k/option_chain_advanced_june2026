@@ -11,6 +11,7 @@
   const CALIBRATION_INTERVAL_MS = 30 * 1000;
   const SIGNAL_COOLDOWN_MS = 5 * 60 * 1000;
   const OUTCOME_TOLERANCE_MS = 45 * 1000;
+  const API_TIMEOUT_MS = 12 * 1000;
   const WALL_SCAN_STRIKES = 11;
   const MAX_CONFIRMED_RANGE_POINTS = 100;
   const STRUCTURE_WINDOWS = [
@@ -197,7 +198,10 @@
         instrument_key: el.symbolSelect.value,
         expiry_date: el.expiryInput.value
       });
-      const response = await fetch(`/api/session/history?${params.toString()}`, { cache: "no-store" });
+      const response = await fetch(`/api/session/history?${params.toString()}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(API_TIMEOUT_MS)
+      });
       const payload = await response.json();
       if (!response.ok) {
         updateRecorderStatus({ configured: payload.configured, message: payload.error });
@@ -223,7 +227,7 @@
     } catch (error) {
       updateRecorderStatus({
         configured: state.recorder.configured,
-        message: error.message
+        message: error.name === "TimeoutError" ? "Database history request timed out" : error.message
       });
     }
   }
@@ -245,12 +249,23 @@
     if (!el.recorderStatus) return;
     const { configured, snapshotCount, lastSavedAt, message } = state.recorder;
     const active = configured && lastSavedAt;
-    el.recorderStatus.className = `recorder-pill ${active ? "active" : configured === false ? "off" : ""}`;
+    const checkingMessages = ["Checking database", "Loading session", "Waiting for expiry"];
+    const checking = configured === null && checkingMessages.includes(message);
+    const closed = configured === true && message === "Outside NSE/BSE cash session";
+    const ready = configured === true && !active;
+    const unavailable = configured === null && !checking;
+    el.recorderStatus.className = `recorder-pill ${active || ready ? "active" : configured === false || unavailable ? "off" : ""}`;
     el.recorderStatus.textContent = active
       ? `DB ${snapshotCount} · ${formatTime(new Date(lastSavedAt).getTime())}`
       : configured === false
         ? "DB setup needed"
-        : "DB checking";
+        : closed
+          ? "DB ready · market closed"
+          : ready
+            ? "DB ready · no data today"
+            : checking
+              ? "DB checking"
+              : "DB unavailable";
     el.recorderStatus.title = message || "Server session recorder status";
   }
 
