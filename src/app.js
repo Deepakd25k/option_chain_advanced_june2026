@@ -12,6 +12,9 @@
   const SIGNAL_COOLDOWN_MS = 5 * 60 * 1000;
   const OUTCOME_TOLERANCE_MS = 45 * 1000;
   const API_TIMEOUT_MS = 12 * 1000;
+  const EVENT_TOAST_MS = 60 * 1000;
+  const EVENT_STORAGE_VERSION = 1;
+  const EVENT_MAX_ITEMS = 80;
   const WALL_SCAN_STRIKES = 11;
   const MAX_CONFIRMED_RANGE_POINTS = 100;
   const STRUCTURE_WINDOWS = [
@@ -36,6 +39,7 @@
     structureRead: null,
     sessionPlaybook: null,
     playbookLastChecked: 0,
+    eventTape: freshEventTapeState(),
     structureStability: {
       key: null,
       since: null,
@@ -76,7 +80,8 @@
       "pressureNarrative", "matrixTable",
       "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable", "sessionMemoryCard",
       "memoryHeadline", "memoryMeta", "memoryStatus", "memoryLearning", "memoryMapTitle",
-      "memoryHistory", "memoryScenarios", "memoryFooter"
+      "memoryHistory", "memoryScenarios", "memoryFooter", "eventCenterButton", "eventUnreadCount",
+      "eventToastStack", "eventDrawerBackdrop", "eventDrawer", "eventDrawerClose", "eventDrawerSummary", "eventTape"
     ].forEach((id) => {
       el[id] = document.getElementById(id);
     });
@@ -95,6 +100,9 @@
     el.pauseButton.addEventListener("click", togglePause);
     el.exportCalibration.addEventListener("click", exportCalibration);
     el.clearCalibration.addEventListener("click", clearCalibration);
+    el.eventCenterButton.addEventListener("click", openEventDrawer);
+    el.eventDrawerClose.addEventListener("click", closeEventDrawer);
+    el.eventDrawerBackdrop.addEventListener("click", closeEventDrawer);
     el.symbolSelect.addEventListener("change", async () => {
       localStorage.setItem("instrument_key", el.symbolSelect.value);
       resetSessionState();
@@ -130,6 +138,7 @@
     state.structureRead = null;
     state.sessionPlaybook = null;
     state.playbookLastChecked = 0;
+    state.eventTape = freshEventTapeState();
     state.structureStability = { key: null, since: null, windows: 0, lastWindowEnd: null };
     state.signalStartSnapshot = null;
     state.recorder.snapshotCount = 0;
@@ -549,6 +558,7 @@
     }
     saveCalibrationState();
     renderMarketStructure(structureRead);
+    updateStructureEventTape(structureRead, latest);
     renderMatrix();
     renderCalibrationLab();
     renderOutcomeTable();
@@ -770,6 +780,463 @@
     el.pressureNarrative.textContent = pressure.narrative;
   }
 
+  function freshEventTapeState() {
+    return {
+      sessionKey: null,
+      events: [],
+      trackers: {},
+      lastEvaluatedBucket: null,
+      lastWalls: null,
+      unread: 0,
+      drawerOpen: false,
+      pendingNotifications: null
+    };
+  }
+
+  function eventStorageKey(snapshot) {
+    return `structure_events_v${EVENT_STORAGE_VERSION}:${istSessionDate(snapshot.time)}:${snapshot.instrumentKey}:${snapshot.expiry}`;
+  }
+
+  function hydrateEventTape(snapshot) {
+    const key = eventStorageKey(snapshot);
+    if (state.eventTape.sessionKey === key) return;
+    const fresh = freshEventTapeState();
+    fresh.sessionKey = key;
+    try {
+      const stored = JSON.parse(localStorage.getItem(key) || "null");
+      if (stored && stored.version === EVENT_STORAGE_VERSION) {
+        fresh.events = Array.isArray(stored.events) ? stored.events.slice(0, EVENT_MAX_ITEMS) : [];
+        fresh.trackers = stored.trackers && typeof stored.trackers === "object" ? stored.trackers : {};
+        fresh.lastEvaluatedBucket = Number.isFinite(stored.lastEvaluatedBucket) ? stored.lastEvaluatedBucket : null;
+        fresh.lastWalls = stored.lastWalls || null;
+        fresh.unread = number(stored.unread);
+      }
+    } catch (error) {
+      localStorage.removeItem(key);
+    }
+    state.eventTape = fresh;
+    renderEventCenter();
+  }
+
+  function persistEventTape() {
+    if (!state.eventTape.sessionKey) return;
+    localStorage.setItem(state.eventTape.sessionKey, JSON.stringify({
+      version: EVENT_STORAGE_VERSION,
+      events: state.eventTape.events.slice(0, EVENT_MAX_ITEMS),
+      trackers: state.eventTape.trackers,
+      lastEvaluatedBucket: state.eventTape.lastEvaluatedBucket,
+      lastWalls: state.eventTape.lastWalls,
+      unread: state.eventTape.unread
+    }));
+  }
+
+  function updateStructureEventTape(read, latest) {
+    hydrateEventTape(latest);
+    renderEventCenter();
+    if (latest.source !== "live" || !isMarketSessionIst(latest.time)) return;
+    const bucketMs = 5 * 60 * 1000;
+    const millisecondsIntoBucket = latest.time % bucketMs;
+    if (millisecondsIntoBucket > 2 * 60 * 1000) return;
+    const bucket = Math.floor(latest.time / bucketMs);
+    if (state.eventTape.lastEvaluatedBucket === bucket) return;
+
+    if (state.eventTape.lastEvaluatedBucket !== null && bucket - state.eventTape.lastEvaluatedBucket > 1) {
+      state.eventTape.pendingNotifications = [];
+      pauseEventsAcrossGap(latest.time);
+      flushEventNotifications();
+      state.eventTape.lastEvaluatedBucket = bucket;
+      state.eventTape.lastWalls = wallSnapshot(read);
+      persistEventTape();
+      renderEventCenter();
+      return;
+    }
+
+    state.eventTape.pendingNotifications = [];
+    collectWallMigrationEvents(read, latest, bucket);
+    const observations = buildStructureEventObservations(read, latest);
+    ["pressure", "support", "resistance"].forEach((category) => {
+      processEventObservation(category, observations[category] || null, bucket, latest);
+    });
+    flushEventNotifications();
+    state.eventTape.lastEvaluatedBucket = bucket;
+    state.eventTape.lastWalls = wallSnapshot(read);
+    persistEventTape();
+    renderEventCenter();
+  }
+
+  function buildStructureEventObservations(read, latest) {
+    const observations = { pressure: null, support: null, resistance: null };
+    const pressure = read.pressure && read.pressure.eventData;
+    if (pressure && pressure.aligned >= 2) {
+      const label = pressure.direction === "up" ? "UPSIDE" : "DOWNSIDE";
+      observations.pressure = {
+        signature: `pressure:${pressure.direction}`,
+        title: `${label} PRESSURE`,
+        tone: pressure.direction === "up" ? "positive" : "negative",
+        direction: pressure.direction,
+        startSpot: latest.spot,
+        details: `${pressure.aligned}/${pressure.total} material contracts · spot ${signed(pressure.spotMove)} / 5m`,
+        meaning: `(OI and adjusted premium agree toward ${pressure.direction === "up" ? "upside" : "downside"}; price release is being checked)`,
+        metrics: pressure
+      };
+    }
+
+    const support = read.contracts.find((item) => item.strike === read.support && item.side === "PE");
+    const resistance = read.contracts.find((item) => item.strike === read.resistance && item.side === "CE");
+    observations.support = wallObservation(support, read.supportWall, latest, "support");
+    observations.resistance = wallObservation(resistance, read.resistanceWall, latest, "resistance");
+    return observations;
+  }
+
+  function wallObservation(contract, wall, latest, role) {
+    const recent = contract && contract.windows && contract.windows["300"];
+    if (!contract || !wall || !wall.stable || !recent || !recent.available || !recent.materialOi || !recent.materialResidual) return null;
+    const inventory = inventoryWindowRead(recent, contract.side);
+    if (!inventory.clean) return null;
+    const isSupport = role === "support";
+    const flowName = inventoryTypeName(inventory.type);
+    const title = `${isSupport ? "SUPPORT" : "RESISTANCE"} ${contract.side} ${flowName.toUpperCase()}`;
+    const meaning = wallInventoryMeaning(contract.side, inventory.type, isSupport);
+    return {
+      signature: `${role}:${contract.strike}:${inventory.type}`,
+      title,
+      tone: inventory.tone,
+      direction: inventoryDirection(contract.side, inventory.type),
+      startSpot: latest.spot,
+      details: `${price(contract.strike, 0)} ${contract.side} ${flowName} · OI ${compact(recent.oiChange)} · Prem adj ${signed(recent.residual)}`,
+      meaning,
+      metrics: {
+        strike: contract.strike,
+        side: contract.side,
+        oiChange: recent.oiChange,
+        residual: recent.residual,
+        inventoryType: inventory.type
+      }
+    };
+  }
+
+  function inventoryTypeName(type) {
+    return ({
+      "long-build": "long buildup",
+      writing: "writing",
+      covering: "short covering",
+      "long-unwind": "long unwind"
+    })[type] || "material flow";
+  }
+
+  function wallInventoryMeaning(side, type, isSupport) {
+    const meanings = {
+      "PE:writing": "(PE writers added at the stable support; this is support-defence evidence while spot holds)",
+      "PE:long-build": "(PE buyers added at the support strike; downside pressure is attacking the level)",
+      "PE:covering": "(PE shorts exited while premium strengthened; previous support-writing inventory weakened)",
+      "PE:long-unwind": "(PE buyers exited and premium weakened; bearish demand reduced even though OI fell)",
+      "CE:writing": "(CE writers added at the stable resistance; this is resistance-defence evidence while spot stays below)",
+      "CE:long-build": "(CE buyers added at the resistance strike; upside pressure is attacking the level)",
+      "CE:covering": "(CE shorts exited while premium strengthened; resistance inventory weakened)",
+      "CE:long-unwind": "(CE buyers exited and premium weakened; upside demand reduced even though OI fell)"
+    };
+    return meanings[`${side}:${type}`] || `(Material ${side} inventory changed at the ${isSupport ? "support" : "resistance"} wall)`;
+  }
+
+  function processEventObservation(category, observation, bucket, latest) {
+    const tracker = state.eventTape.trackers[category];
+    if (!observation) {
+      if (!tracker) return;
+      tracker.misses = number(tracker.misses) + 1;
+      if (tracker.misses >= 2) closeTrackedEvent(category, "FADED", latest.time, "(The same material condition was absent for two completed 5m windows)");
+      return;
+    }
+
+    if (!tracker || tracker.signature !== observation.signature) {
+      if (tracker) {
+        const oppositePressure = category === "pressure" && tracker.direction && tracker.direction !== observation.direction;
+        closeTrackedEvent(category, oppositePressure ? "FAILED" : "FADED", latest.time,
+          oppositePressure ? "(Opposite material inventory replaced the active pressure)" : "(The previous structure condition changed)"
+        );
+      }
+      startTrackedEvent(category, observation, bucket, latest);
+      return;
+    }
+
+    if (bucket - tracker.lastBucket !== 1) return;
+    tracker.windows += 1;
+    tracker.lastBucket = bucket;
+    tracker.misses = 0;
+    updateTrackedEvent(category, observation, latest);
+  }
+
+  function startTrackedEvent(category, observation, bucket, latest) {
+    const id = `${latest.time}:${category}:${observation.signature}`;
+    const event = {
+      id,
+      category,
+      signature: observation.signature,
+      title: observation.title,
+      baseTitle: observation.title,
+      tone: observation.tone,
+      direction: observation.direction,
+      stage: "EMERGING",
+      active: true,
+      windows: 1,
+      durationMinutes: 5,
+      startTime: latest.time,
+      endTime: latest.time,
+      startSpot: observation.startSpot,
+      details: observation.details,
+      meaning: observation.meaning,
+      metrics: observation.metrics
+    };
+    state.eventTape.events.unshift(event);
+    state.eventTape.events = state.eventTape.events.slice(0, EVENT_MAX_ITEMS);
+    state.eventTape.trackers[category] = {
+      eventId: id,
+      signature: observation.signature,
+      direction: observation.direction,
+      windows: 1,
+      lastBucket: bucket,
+      misses: 0,
+      lastNotifiedStage: "EMERGING"
+    };
+    notifyEvent(event);
+  }
+
+  function updateTrackedEvent(category, observation, latest) {
+    const tracker = state.eventTape.trackers[category];
+    const event = findStructureEvent(tracker.eventId);
+    if (!event) return;
+    const previousStage = event.stage;
+    event.windows = tracker.windows;
+    event.durationMinutes = tracker.windows * 5;
+    event.endTime = latest.time;
+    event.details = observation.details;
+    event.meaning = observation.meaning;
+    event.metrics = observation.metrics;
+    event.stage = tracker.windows >= 3 ? "SUSTAINED" : tracker.windows >= 2 ? "CONFIRMED" : "EMERGING";
+
+    if (category === "pressure") applyPressureOutcome(event, observation, latest);
+    event.title = eventTitleForStage(event);
+    if (event.stage !== previousStage && event.stage !== tracker.lastNotifiedStage) {
+      tracker.lastNotifiedStage = event.stage;
+      notifyEvent(event);
+    }
+  }
+
+  function applyPressureOutcome(event, observation, latest) {
+    const directionMove = event.direction === "up" ? latest.spot - event.startSpot : event.startSpot - latest.spot;
+    const normalMove = sessionMedianFiveMinuteMove(latest.time);
+    const responseRatio = normalMove > 0 ? directionMove / normalMove : null;
+    const metrics = observation.metrics;
+    event.details = `${metrics.aligned}/${metrics.total} material contracts · spot ${signed(latest.spot - event.startSpot)} · ${responseRatio === null ? "normal building" : `${responseRatio.toFixed(2)}× normal`}`;
+    if (event.windows >= 2 && responseRatio !== null && responseRatio >= 1) {
+      event.stage = "RELEASED";
+      event.meaning = "(Sustained option inventory converted into a meaningful same-direction spot move)";
+    } else if (event.windows >= 3 && directionMove <= 0) {
+      event.stage = "ABSORBED";
+      event.meaning = "(Material option pressure persisted for 15m, but spot repeatedly failed to move with it)";
+    } else if (event.windows >= 3) {
+      event.meaning = "(Pressure persisted for 15m; price response exists but full release is still unproven)";
+    } else if (event.windows >= 2) {
+      event.meaning = "(The same material inventory direction appeared in two consecutive 5m windows)";
+    }
+  }
+
+  function eventTitleForStage(event) {
+    if (["RELEASED", "ABSORBED", "FAILED", "FADED", "UNVERIFIED GAP"].includes(event.stage)) {
+      const direction = event.direction === "up" ? "UPSIDE" : event.direction === "down" ? "DOWNSIDE" : event.baseTitle;
+      return event.category === "pressure" ? `${direction} ${event.stage}` : event.baseTitle;
+    }
+    return event.baseTitle;
+  }
+
+  function closeTrackedEvent(category, stage, time, meaning) {
+    const tracker = state.eventTape.trackers[category];
+    if (!tracker) return;
+    const event = findStructureEvent(tracker.eventId);
+    if (event) {
+      event.active = false;
+      event.endTime = time;
+      event.stage = stage;
+      event.title = eventTitleForStage(event);
+      event.meaning = meaning || event.meaning;
+      if (event.windows >= 2 || stage === "FAILED") notifyEvent(event);
+    }
+    delete state.eventTape.trackers[category];
+  }
+
+  function pauseEventsAcrossGap(time) {
+    Object.keys(state.eventTape.trackers).forEach((category) => {
+      closeTrackedEvent(category, "UNVERIFIED GAP", time, "(Recording paused; the missing interval was not assumed or added to duration)");
+    });
+  }
+
+  function collectWallMigrationEvents(read, latest, bucket) {
+    const previous = state.eventTape.lastWalls;
+    const current = wallSnapshot(read);
+    if (!previous) return;
+    if (read.supportWall && read.supportWall.stable && previous.support && previous.support !== current.support) {
+      addDiscreteStructureEvent({
+        id: `${bucket}:support-migration:${previous.support}:${current.support}`,
+        category: "migration",
+        title: "SUPPORT WALL MIGRATED",
+        tone: current.support > previous.support ? "positive" : "negative",
+        details: `PE wall ${price(previous.support, 0)} → ${price(current.support, 0)} · OI ${compact(read.supportWall.oi)}`,
+        meaning: `(The maximum PE OI wall shifted ${current.support > previous.support ? "higher" : "lower"} and held across completed windows)`,
+        time: latest.time
+      });
+    }
+    if (read.resistanceWall && read.resistanceWall.stable && previous.resistance && previous.resistance !== current.resistance) {
+      addDiscreteStructureEvent({
+        id: `${bucket}:resistance-migration:${previous.resistance}:${current.resistance}`,
+        category: "migration",
+        title: "RESISTANCE WALL MIGRATED",
+        tone: current.resistance > previous.resistance ? "positive" : "negative",
+        details: `CE wall ${price(previous.resistance, 0)} → ${price(current.resistance, 0)} · OI ${compact(read.resistanceWall.oi)}`,
+        meaning: `(The maximum CE OI wall shifted ${current.resistance > previous.resistance ? "higher" : "lower"} and held across completed windows)`,
+        time: latest.time
+      });
+    }
+  }
+
+  function addDiscreteStructureEvent(input) {
+    if (state.eventTape.events.some((event) => event.id === input.id)) return;
+    const event = {
+      ...input,
+      baseTitle: input.title,
+      stage: "CONFIRMED",
+      active: false,
+      windows: 2,
+      durationMinutes: 10,
+      startTime: input.time,
+      endTime: input.time
+    };
+    state.eventTape.events.unshift(event);
+    state.eventTape.events = state.eventTape.events.slice(0, EVENT_MAX_ITEMS);
+    notifyEvent(event);
+  }
+
+  function wallSnapshot(read) {
+    return {
+      support: read.supportWall && read.supportWall.stable ? read.support || 0 : 0,
+      resistance: read.resistanceWall && read.resistanceWall.stable ? read.resistance || 0 : 0
+    };
+  }
+
+  function findStructureEvent(id) {
+    return state.eventTape.events.find((event) => event.id === id) || null;
+  }
+
+  function notifyEvent(event) {
+    state.eventTape.unread += 1;
+    renderEventButton();
+    if (Array.isArray(state.eventTape.pendingNotifications)) {
+      state.eventTape.pendingNotifications.push(event);
+      return;
+    }
+    showEventToast(event, 0);
+  }
+
+  function flushEventNotifications() {
+    const pending = state.eventTape.pendingNotifications || [];
+    state.eventTape.pendingNotifications = null;
+    if (!pending.length) return;
+    const stagePriority = { RELEASED: 7, ABSORBED: 7, FAILED: 6, CONFIRMED: 5, SUSTAINED: 4, EMERGING: 3, FADED: 2, "UNVERIFIED GAP": 1 };
+    const categoryPriority = { pressure: 4, migration: 3, support: 2, resistance: 2 };
+    const ranked = [...pending].sort((left, right) => (
+      number(stagePriority[right.stage]) - number(stagePriority[left.stage])
+      || number(categoryPriority[right.category]) - number(categoryPriority[left.category])
+    ));
+    showEventToast(ranked[0], ranked.length - 1);
+  }
+
+  function showEventToast(event, relatedCount = 0) {
+    const toast = document.createElement("article");
+    toast.className = `event-toast ${event.tone || "neutral"}`;
+    toast.dataset.eventId = event.id;
+    toast.innerHTML = `
+      <button class="event-toast-open" type="button" aria-label="Open Structure Event Center">
+        <span>${escapeHtml(formatTime(event.endTime))} · ${escapeHtml(event.stage)} · ${event.durationMinutes}m${relatedCount ? ` · +${relatedCount} related` : ""}</span>
+        <strong>${escapeHtml(event.title)}</strong>
+        <em>${escapeHtml(event.details || "")}</em>
+        <small>${escapeHtml(event.meaning || "")}</small>
+      </button>
+      <button class="event-toast-close" type="button" title="Dismiss notification" aria-label="Dismiss notification">×</button>
+      <i aria-hidden="true"></i>
+    `;
+    const openButton = toast.querySelector(".event-toast-open");
+    const closeButton = toast.querySelector(".event-toast-close");
+    openButton.addEventListener("click", openEventDrawer);
+    closeButton.addEventListener("click", () => dismissEventToast(toast));
+    el.eventToastStack.prepend(toast);
+    while (el.eventToastStack.children.length > 3) el.eventToastStack.lastElementChild.remove();
+    window.setTimeout(() => dismissEventToast(toast), EVENT_TOAST_MS);
+  }
+
+  function dismissEventToast(toast) {
+    if (!toast || !toast.isConnected) return;
+    toast.classList.add("leaving");
+    window.setTimeout(() => toast.remove(), 180);
+  }
+
+  function openEventDrawer() {
+    state.eventTape.drawerOpen = true;
+    state.eventTape.unread = 0;
+    el.eventDrawer.classList.add("open");
+    el.eventDrawer.setAttribute("aria-hidden", "false");
+    el.eventDrawerBackdrop.hidden = false;
+    document.body.classList.add("event-drawer-open");
+    persistEventTape();
+    renderEventCenter();
+  }
+
+  function closeEventDrawer() {
+    state.eventTape.drawerOpen = false;
+    el.eventDrawer.classList.remove("open");
+    el.eventDrawer.setAttribute("aria-hidden", "true");
+    el.eventDrawerBackdrop.hidden = true;
+    document.body.classList.remove("event-drawer-open");
+  }
+
+  function renderEventCenter() {
+    renderEventButton();
+    const events = [...state.eventTape.events].sort((left, right) => right.endTime - left.endTime);
+    const active = events.filter((event) => event.active).length;
+    const confirmed = events.filter((event) => event.windows >= 2).length;
+    el.eventDrawerSummary.textContent = events.length
+      ? `${active} live · ${confirmed} confirmed · ${events.length} total today · newest first`
+      : "No meaningful completed-5m transition recorded yet";
+    el.eventTape.innerHTML = events.length ? events.map(eventTapeRow).join("") : `
+      <div class="event-empty">
+        <strong>Waiting for meaningful structure</strong>
+        <span>Material OI and adjusted premium must agree. A 5m observation appears early; 10m confirms and 15m sustains it.</span>
+      </div>
+    `;
+  }
+
+  function renderEventButton() {
+    const unread = number(state.eventTape.unread);
+    el.eventUnreadCount.hidden = unread === 0;
+    el.eventUnreadCount.textContent = unread > 99 ? "99+" : String(unread);
+    el.eventCenterButton.classList.toggle("has-events", state.eventTape.events.length > 0);
+  }
+
+  function eventTapeRow(event) {
+    const sameTime = event.startTime === event.endTime;
+    const time = sameTime ? formatTime(event.endTime) : `${formatTime(event.startTime)}–${formatTime(event.endTime)}`;
+    return `
+      <article class="event-tape-row ${event.tone || "neutral"} ${event.active ? "active" : ""}">
+        <div class="event-tape-time">
+          <strong>${escapeHtml(time)}</strong>
+          <span>${event.durationMinutes}m observed</span>
+        </div>
+        <div class="event-tape-copy">
+          <header><strong>${escapeHtml(event.title)}</strong><b>${escapeHtml(event.stage)}</b></header>
+          <p>${escapeHtml(event.details || "")}</p>
+          <span>${escapeHtml(event.meaning || "")}</span>
+        </div>
+      </article>
+    `;
+  }
+
   function structureContractRow(contract) {
     return `
       <div class="structure-contract ${contract.tone}">
@@ -898,7 +1365,8 @@
         ],
         narrative: flows.length
           ? "Material OI and premium-residual flows disagree across nearby strikes. The current spot move cannot yet be attributed to one inventory side."
-          : "Nearby contracts do not show simultaneous material OI and premium-residual change. Treat the current spot move as unproven by option inventory."
+          : "Nearby contracts do not show simultaneous material OI and premium-residual change. Treat the current spot move as unproven by option inventory.",
+        eventData: null
       };
     }
 
@@ -930,7 +1398,20 @@
         pressureMetric("Wall / role", roleFlip.confirmed ? roleFlip.value : migration.value, roleFlip.confirmed ? roleFlip.tone : migration.tone),
         pressureMetric("Path load", path.value, path.tone)
       ],
-      narrative
+      narrative,
+      eventData: {
+        direction,
+        aligned: dominant.length,
+        total: flows.length,
+        bullish: bullish.length,
+        bearish: bearish.length,
+        spotMove: rawSpotMove,
+        responseRatio,
+        drivers,
+        verdict,
+        oppositeMove,
+        released
+      }
     };
   }
 
@@ -945,7 +1426,8 @@
         pressureMetric("Wall / role", "Building", "neutral"),
         pressureMetric("Path load", "Building", "neutral")
       ],
-      narrative: "The inferred move driver will appear only after material OI and delta-adjusted premium residual agree across multiple nearby contracts."
+      narrative: "The inferred move driver will appear only after material OI and delta-adjusted premium residual agree across multiple nearby contracts.",
+      eventData: null
     };
   }
 

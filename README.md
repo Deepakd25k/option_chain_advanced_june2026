@@ -93,6 +93,19 @@ The Market Structure card also compares material five-minute option inventory wi
 
 The narrative is an inferred market-mechanics explanation, not proof of an external news or event-driven cause.
 
+### Floating Structure Event Center
+
+During the live session, meaningful structure transitions appear as dismissible floating notifications for 60 seconds. Clicking `Events` opens a newest-first session tape.
+
+- evaluation occurs only near a completed five-minute boundary using exact live history
+- one meaningful window is `EMERGING`, two consecutive windows are `CONFIRMED`, and three are `SUSTAINED`
+- a pressure event can evolve into `RELEASED` or `ABSORBED`; the same event row is updated instead of creating five-minute duplicates
+- support/resistance alerts name the actual PE/CE inventory type: writing, long buildup, short covering, or long unwind
+- wall migration is reported only after the new max-OI wall is completed-window stable
+- recording gaps end the active duration as `UNVERIFIED GAP`; missing time is never counted or inferred
+
+The early five-minute observation is context for a chart-based scalping decision, not an automatic entry instruction.
+
 ### Session Memory & Tomorrow Playbook
 
 After a completed market session, `/api/session/playbook` builds and stores a versioned post-market read from DB data:

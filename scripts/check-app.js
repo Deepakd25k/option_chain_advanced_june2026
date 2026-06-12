@@ -38,7 +38,12 @@ for (const id of [
   "outcomeTable",
   "sessionMemoryCard",
   "memoryHeadline",
-  "memoryScenarios"
+  "memoryScenarios",
+  "eventCenterButton",
+  "eventUnreadCount",
+  "eventToastStack",
+  "eventDrawer",
+  "eventTape"
 ]) {
   if (!html.includes(`id="${id}"`)) {
     console.error(`Missing DOM id: ${id}`);
@@ -90,7 +95,18 @@ const calibrationGuards = [
   "snapshot.source === \"live\"",
   "exitBid - signal.entryAsk",
   "checks.length < 3",
-  "completed.length < 20"
+  "completed.length < 20",
+  "EVENT_TOAST_MS = 60 * 1000",
+  "updateStructureEventTape(structureRead, latest)",
+  "millisecondsIntoBucket > 2 * 60 * 1000",
+  "processEventObservation",
+  "flushEventNotifications",
+  "+${relatedCount} related",
+  "event.windows >= 3",
+  "UPSIDE",
+  "ABSORBED",
+  "wallInventoryMeaning",
+  "UNVERIFIED GAP"
 ];
 
 for (const guard of calibrationGuards) {

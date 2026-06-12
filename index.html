@@ -19,6 +19,10 @@
         </div>
         <div class="top-actions">
           <span class="recorder-pill" id="recorderStatus" title="Server session recorder status">DB checking</span>
+          <button class="event-center-button" id="eventCenterButton" type="button" title="Open structure event notifications" aria-label="Open structure event notifications">
+            <span>Events</span>
+            <b id="eventUnreadCount" hidden>0</b>
+          </button>
           <button class="icon-button" id="refreshButton" type="button" title="Refresh now" aria-label="Refresh now">
             <span aria-hidden="true">↻</span>
           </button>
@@ -235,6 +239,20 @@
         </section>
       </main>
     </div>
+
+    <div class="event-toast-stack" id="eventToastStack" aria-live="polite" aria-atomic="false"></div>
+    <div class="event-drawer-backdrop" id="eventDrawerBackdrop" hidden></div>
+    <aside class="event-drawer" id="eventDrawer" aria-label="Structure Event Center" aria-hidden="true">
+      <header>
+        <div>
+          <p class="eyebrow">Structure Event Center</p>
+          <h2>Meaningful completed-5m transitions</h2>
+        </div>
+        <button class="icon-button" id="eventDrawerClose" type="button" title="Close event center" aria-label="Close event center">×</button>
+      </header>
+      <div class="event-drawer-summary" id="eventDrawerSummary">No confirmed structure events yet</div>
+      <div class="event-tape" id="eventTape"></div>
+    </aside>
 
     <script src="/src/app.js"></script>
   </body>
