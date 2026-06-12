@@ -102,6 +102,8 @@ After a completed market session, `/api/session/playbook` builds and stores a ve
 - preserves the actual confirmed trailing range width when it is at most 100 points; without a qualified range it does not invent a choppy zone
 - creates five conditional opening-location scenarios with explicit fresh-5m OI activation and invalidation rules
 - stores a categorical fingerprint and reports only exact prior matches; it never creates a historical probability from insufficient samples
+- remains gap-aware when the browser is briefly closed: missing five-minute buckets are counted and shown, never filled, and no OI/premium delta or range is calculated across the missing interval
+- keeps exact opening/closing walls and contiguous observed blocks eligible for session memory; a missing opening or closing snapshot still makes the session partial
 
 The card appears immediately below Formula Rulebook. It is a next-session preparation aid, not a guaranteed direction forecast.
 
@@ -114,6 +116,8 @@ CRON_SECRET=a-long-random-secret
 ```
 
 Call the endpoint with `Authorization: Bearer <CRON_SECRET>` once per minute during market hours. Vercel Pro supports per-minute cron. Vercel Hobby only supports daily cron, so use an external minute scheduler or keep the dashboard open on Hobby. Do not add a per-minute cron expression to a Hobby project's `vercel.json`; Vercel will reject the deployment.
+
+For a no-cost setup, keep the dashboard open while trading. A brief laptop/network gap does not corrupt post-market learning: the playbook marks the session `GAP-AWARE`, ignores those missing buckets, and continues from the next real DB snapshot. This preserves honest current-session learning but cannot recover activity that Upstox was never asked to send.
 
 The browser calls:
 

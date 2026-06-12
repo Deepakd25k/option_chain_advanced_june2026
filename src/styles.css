@@ -1007,6 +1007,12 @@ td {
   color: #80e7d0;
 }
 
+.memory-status.gap-aware {
+  background: rgba(235, 184, 88, 0.12);
+  border-color: rgba(235, 184, 88, 0.38);
+  color: #efc979;
+}
+
 .memory-learning {
   border: 1px solid var(--line);
   border-radius: var(--radius);

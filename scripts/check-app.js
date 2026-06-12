@@ -117,7 +117,7 @@ for (const guard of [
 
 const sessionPlaybook = fs.readFileSync(path.resolve(__dirname, "..", "lib/session-playbook.js"), "utf8");
 for (const guard of [
-  "session-memory-v1",
+  "session-memory-v2-gap-aware",
   "WALL_SCAN_STRIKES = 11",
   "MAX_CONFIRMED_RANGE_POINTS = 100",
   "findMaxOiWall",
@@ -128,6 +128,21 @@ for (const guard of [
 ]) {
   if (!sessionPlaybook.includes(guard)) {
     console.error(`Missing session playbook guard: ${guard}`);
+    process.exit(1);
+  }
+}
+
+for (const guard of [
+  "missingBuckets",
+  "observedCoveragePct",
+  "continuousClosingReference",
+  "latestContiguousCandles",
+  "range-unobserved-across-gaps",
+  "isMemoryEligible",
+  'status: !memoryEligible ? "PARTIAL" : missingBuckets ? "GAP-AWARE" : "COMPLETE"'
+]) {
+  if (!sessionPlaybook.includes(guard)) {
+    console.error(`Missing gap-aware playbook guard: ${guard}`);
     process.exit(1);
   }
 }
@@ -209,6 +224,37 @@ if (
   || regressionPlaybook.scenarios.length !== 5
 ) {
   console.error("Session playbook end-to-end regression failed");
+  process.exit(1);
+}
+
+
+const gapAwarePlaybook = buildSessionPlaybook({
+  sessionDate: "2026-06-11",
+  expiryDate: "2026-06-16",
+  instrumentKey: "NSE_INDEX|Nifty 50",
+  snapshotCount: 4,
+  firstSavedAt: "2026-06-11T03:50:00.000Z",
+  lastSavedAt: "2026-06-11T10:00:00.000Z",
+  snapshots: [
+    regressionPayload("2026-06-11T03:50:00.000Z", 23202.9),
+    regressionPayload("2026-06-11T03:55:00.000Z", 23210),
+    regressionPayload("2026-06-11T04:15:00.000Z", 23220),
+    regressionPayload("2026-06-11T10:00:00.000Z", 23202.9)
+  ],
+  candles5m: [
+    { start: "2026-06-11T03:50:00.000Z", open: 23202, high: 23210, low: 23200, close: 23208 },
+    { start: "2026-06-11T03:55:00.000Z", open: 23208, high: 23214, low: 23205, close: 23210 },
+    { start: "2026-06-11T04:15:00.000Z", open: 23220, high: 23225, low: 23215, close: 23222 },
+    { start: "2026-06-11T10:00:00.000Z", open: 23205, high: 23210, low: 23200, close: 23202 }
+  ]
+});
+if (
+  gapAwarePlaybook.dataQuality.status !== "GAP-AWARE"
+  || gapAwarePlaybook.dataQuality.missingBuckets < 1
+  || !gapAwarePlaybook.dataQuality.memoryEligible
+  || !gapAwarePlaybook.story.learning.includes("were ignored, not estimated")
+) {
+  console.error("Gap-aware session playbook regression failed");
   process.exit(1);
 }
 

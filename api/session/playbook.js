@@ -4,7 +4,7 @@ const {
   loadPriorSessionPlaybooks,
   saveSessionPlaybook
 } = require("../../lib/session-store");
-const { FORMULA_VERSION, buildSessionPlaybook } = require("../../lib/session-playbook");
+const { buildSessionPlaybook } = require("../../lib/session-playbook");
 
 module.exports = async function handler(req, res) {
   setJsonHeaders(res);
@@ -26,11 +26,10 @@ module.exports = async function handler(req, res) {
     const prior = await loadPriorSessionPlaybooks(
       instrumentKey,
       session.sessionDate,
-      FORMULA_VERSION,
       30
     );
     const playbook = buildSessionPlaybook(session, prior);
-    if (playbook.dataQuality.status === "COMPLETE") {
+    if (playbook.dataQuality.memoryEligible) {
       await saveSessionPlaybook(playbook);
     }
     return sendJson(res, 200, { configured: true, ready: true, playbook });

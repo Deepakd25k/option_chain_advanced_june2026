@@ -288,10 +288,13 @@
     const memory = playbook.historicalMemory;
     const quality = playbook.dataQuality;
     el.memoryHeadline.textContent = `${playbook.sessionDate} close · ${price(closing.support.strike, 0)} support · ${price(closing.resistance.strike, 0)} resistance`;
-    el.memoryMeta.textContent = `${quality.exactFiveMinuteSnapshots} exact 5m snapshots · ${quality.gaps} gaps · expiry ${playbook.expiryDate}`;
-    const memoryStatus = quality.status === "COMPLETE" ? memory.evidence : "PARTIAL DATA";
+    const gapText = quality.missingBuckets
+      ? `${quality.missingBuckets} missing 5m buckets ignored · longest ${quality.longestGapMinutes}m`
+      : "no missing 5m buckets";
+    el.memoryMeta.textContent = `${quality.exactFiveMinuteSnapshots} observed 5m snapshots · ${quality.observedCoveragePct}% coverage · ${gapText} · expiry ${playbook.expiryDate}`;
+    const memoryStatus = quality.status === "PARTIAL" ? "PARTIAL DATA" : quality.status === "GAP-AWARE" ? "GAP-AWARE" : memory.evidence;
     el.memoryStatus.textContent = memoryStatus;
-    el.memoryStatus.className = `memory-status ${memoryStatus === "CALIBRATABLE" ? "ready" : "building"}`;
+    el.memoryStatus.className = `memory-status ${memoryStatus === "CALIBRATABLE" ? "ready" : memoryStatus === "GAP-AWARE" ? "gap-aware" : "building"}`;
     el.memoryLearning.innerHTML = [
       ["Today learned", playbook.story.learning],
       ["Why it moved", playbook.story.driver],
@@ -318,7 +321,8 @@
       </article>
     `).join("");
     const matchDates = memory.exactMatchDates.length ? ` Exact prior dates: ${memory.exactMatchDates.join(", ")}.` : " No exact prior fingerprint is stored yet.";
-    el.memoryFooter.textContent = `Formula ${playbook.formulaVersion}. Levels use the same ATM ±11 max-OI walls as Market Structure Intelligence.${matchDates}`;
+    const gapRule = quality.status === "GAP-AWARE" ? " Missing intervals were excluded from deltas and range detection; no values were filled or interpolated." : "";
+    el.memoryFooter.textContent = `Formula ${playbook.formulaVersion}. Levels use the same ATM ±11 max-OI walls as Market Structure Intelligence.${gapRule}${matchDates}`;
   }
 
   function updateRecorderFromSave(recorder, snapshotTime) {
