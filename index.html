@@ -181,8 +181,9 @@
               </div>
               <div>
                 <strong>Dynamic OI Walls</strong>
-                <code>support = highest single-strike PE OI at/below spot inside ATM ±11</code>
-                <code>resistance = highest single-strike CE OI at/above spot; ties use the nearer strike</code>
+                <code>immediate support/resistance = highest actual PE/CE OI on the correct side of spot inside the nearest 3 strikes</code>
+                <code>completed 5m windows provide stability; no distance weight or blended score is used</code>
+                <code>absolute maximum PE/CE OI remains visible separately as the major wall, not the immediate trading level</code>
               </div>
               <div>
                 <strong>Confirmed Range</strong>
@@ -203,7 +204,7 @@
               <div>
                 <strong>Tomorrow Playbook</strong>
                 <code>uses the last actual snapshot from each 5m DB bucket; no median or interpolated value</code>
-                <code>support/resistance uses the same ATM ±11 highest PE/CE OI rule as Market Structure Intelligence</code>
+                <code>support/resistance uses the same nearest-3-strike max-OI rule as Market Structure Intelligence; major ATM ±11 max-OI walls remain context</code>
                 <code>choppy zone exists only when the actual confirmed range is 100 points or less; otherwise no range is pre-assigned</code>
                 <code>missing laptop-off buckets are ignored; OI/premium deltas and ranges never cross a data gap</code>
               </div>

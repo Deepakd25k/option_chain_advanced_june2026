@@ -73,8 +73,9 @@ const calibrationGuards = [
   "const MAX_CONFIRMED_RANGE_POINTS = 100",
   "classifyStructureInventory(windows, definition.side)",
   "directionChanges >= 2",
-  "max PE/CE OI walls inside ATM",
-  "findMaxOiWall(latest.rows, latest.spot, side, step)",
+  "immediate max OI inside nearest",
+  "findImmediateOiLevel(latest.rows, latest.spot, side, step)",
+  "majorSupportWall = findMaxOiWall",
   "state.sessionHydrated",
   "supportAdding && resistanceWithdrawing",
   "resistanceAdding && supportWithdrawing",
@@ -97,6 +98,7 @@ const calibrationGuards = [
   "checks.length < 3",
   "completed.length < 20",
   "EVENT_TOAST_MS = 60 * 1000",
+  "EVENT_STORAGE_VERSION = 2",
   "updateStructureEventTape(structureRead, latest)",
   "millisecondsIntoBucket > 2 * 60 * 1000",
   "processEventObservation",
@@ -133,10 +135,12 @@ for (const guard of [
 
 const sessionPlaybook = fs.readFileSync(path.resolve(__dirname, "..", "lib/session-playbook.js"), "utf8");
 for (const guard of [
-  "session-memory-v2-gap-aware",
+  "session-memory-v3-immediate-oi-shelves",
+  "IMMEDIATE_WALL_STRIKES = 3",
   "WALL_SCAN_STRIKES = 11",
   "MAX_CONFIRMED_RANGE_POINTS = 100",
   "findMaxOiWall",
+  "findImmediateOiLevel",
   "snapshots[snapshots.length - 1]",
   "exactFiveMinuteSnapshots",
   "two consecutive completed 5m windows",
@@ -155,6 +159,7 @@ for (const guard of [
   "latestContiguousCandles",
   "range-unobserved-across-gaps",
   "isMemoryEligible",
+  "excludedLegacySessions",
   'status: !memoryEligible ? "PARTIAL" : missingBuckets ? "GAP-AWARE" : "COMPLETE"'
 ]) {
   if (!sessionPlaybook.includes(guard)) {
@@ -166,6 +171,7 @@ for (const guard of [
 const {
   buildSessionPlaybook,
   detectConfirmedRange,
+  findImmediateOiLevel,
   findMaxOiWall,
   inferStrikeStep
 } = require(path.resolve(__dirname, "..", "lib/session-playbook.js"));
@@ -187,6 +193,33 @@ const regressionSupport = findMaxOiWall(regressionRows, 23202.9, "PE", regressio
 const regressionResistance = findMaxOiWall(regressionRows, 23202.9, "CE", regressionStep);
 if (regressionStep !== 50 || regressionSupport.strike !== 23100 || regressionResistance.strike !== 23500) {
   console.error("Session playbook wall regression failed");
+  process.exit(1);
+}
+
+const regressionImmediateSupport = findImmediateOiLevel(regressionRows, 23202.9, "PE", regressionStep);
+const regressionImmediateResistance = findImmediateOiLevel(regressionRows, 23202.9, "CE", regressionStep);
+if (regressionImmediateSupport.strike !== 23100 || regressionImmediateResistance.strike !== 23300) {
+  console.error("Immediate OI shelf regression failed");
+  process.exit(1);
+}
+
+const distantMajorRows = [
+  { strike: 23000, ce: { oi: 1000000 }, pe: { oi: 10000000 } },
+  { strike: 23050, ce: { oi: 1200000 }, pe: { oi: 3000000 } },
+  { strike: 23100, ce: { oi: 1400000 }, pe: { oi: 3500000 } },
+  { strike: 23150, ce: { oi: 1600000 }, pe: { oi: 3200000 } },
+  { strike: 23200, ce: { oi: 1800000 }, pe: { oi: 3800000 } },
+  { strike: 23250, ce: { oi: 2000000 }, pe: { oi: 3600000 } },
+  { strike: 23300, ce: { oi: 2400000 }, pe: { oi: 4200000 } },
+  { strike: 23350, ce: { oi: 2200000 }, pe: { oi: 4000000 } },
+  { strike: 23400, ce: { oi: 2600000 }, pe: { oi: 6000000 } },
+  { strike: 23450, ce: { oi: 5000000 }, pe: { oi: 2500000 } },
+  { strike: 23500, ce: { oi: 9000000 }, pe: { oi: 1800000 } }
+];
+const distantMajor = findMaxOiWall(distantMajorRows, 23420, "PE", 50);
+const immediateShelf = findImmediateOiLevel(distantMajorRows, 23420, "PE", 50);
+if (distantMajor.strike !== 23000 || immediateShelf.strike !== 23400) {
+  console.error("Distant major wall must not replace immediate support shelf");
   process.exit(1);
 }
 
@@ -235,7 +268,8 @@ const regressionPlaybook = buildSessionPlaybook({
 });
 if (
   regressionPlaybook.closing.support.strike !== 23100
-  || regressionPlaybook.closing.resistance.strike !== 23500
+  || regressionPlaybook.closing.resistance.strike !== 23300
+  || regressionPlaybook.closing.majorResistance.strike !== 23500
   || regressionPlaybook.closing.confirmedRange.width !== 65
   || regressionPlaybook.scenarios.length !== 5
 ) {

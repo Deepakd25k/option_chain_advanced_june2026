@@ -4,7 +4,7 @@ Formula-backed intraday option-chain dashboard for Indian index option buyers. I
 
 ## Current Trading Surface
 
-- Market Structure Intelligence: one dynamic card detects opening location, highest single-strike PE/CE OI walls inside ATM ±11 strikes, confirmed ranges, support/resistance tests, and directional inventory pressure.
+- Market Structure Intelligence: one dynamic card detects opening location, highest actual PE/CE OI inside the nearest three directional strikes, separate ATM ±11 absolute max-OI major walls, confirmed ranges, support/resistance tests, and directional inventory pressure.
 - A range is confirmed only from completed 5m candles: up to 100 points wide, at least 20 minutes old, with repeated upper/lower interaction and direction changes.
 - Support, ATM, and resistance contracts show current OI/mid plus actual Open, 5m, 15m, and 30m OI and premium changes.
 - Material OI plus delta-adjusted premium residual classifies concise writing, long buildup, short covering, and long-unwinding behavior inside the same card.
@@ -101,7 +101,7 @@ During the live session, meaningful structure transitions appear as dismissible 
 - one meaningful window is `EMERGING`, two consecutive windows are `CONFIRMED`, and three are `SUSTAINED`
 - a pressure event can evolve into `RELEASED` or `ABSORBED`; the same event row is updated instead of creating five-minute duplicates
 - support/resistance alerts name the actual PE/CE inventory type: writing, long buildup, short covering, or long unwind
-- wall migration is reported only after the new max-OI wall is completed-window stable
+- immediate level migration is reported only after the new nearest-three-strike max-OI level is completed-window stable
 - recording gaps end the active duration as `UNVERIFIED GAP`; missing time is never counted or inferred
 
 The early five-minute observation is context for a chart-based scalping decision, not an automatic entry instruction.
@@ -111,7 +111,7 @@ The early five-minute observation is context for a chart-based scalping decision
 After a completed market session, `/api/session/playbook` builds and stores a versioned post-market read from DB data:
 
 - uses the last actual snapshot saved in each five-minute bucket; it does not interpolate or median-combine the playbook inputs
-- resolves support and resistance with the same ATM ±11 highest single-strike PE/CE OI rule used by Market Structure Intelligence
+- resolves actionable support/resistance with the same nearest-three-strike max-OI rule used by Market Structure Intelligence, while preserving ATM ±11 absolute max-OI walls as separate context
 - preserves the actual confirmed trailing range width when it is at most 100 points; without a qualified range it does not invent a choppy zone
 - creates five conditional opening-location scenarios with explicit fresh-5m OI activation and invalidation rules
 - stores a categorical fingerprint and reports only exact prior matches; it never creates a historical probability from insufficient samples

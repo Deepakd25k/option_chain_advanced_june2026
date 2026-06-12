@@ -13,9 +13,10 @@
   const OUTCOME_TOLERANCE_MS = 45 * 1000;
   const API_TIMEOUT_MS = 12 * 1000;
   const EVENT_TOAST_MS = 60 * 1000;
-  const EVENT_STORAGE_VERSION = 1;
+  const EVENT_STORAGE_VERSION = 2;
   const EVENT_MAX_ITEMS = 80;
   const WALL_SCAN_STRIKES = 11;
+  const IMMEDIATE_WALL_STRIKES = 3;
   const MAX_CONFIRMED_RANGE_POINTS = 100;
   const STRUCTURE_WINDOWS = [
     { key: "open", label: "Open", seconds: null },
@@ -330,8 +331,12 @@
       </article>
     `).join("");
     const matchDates = memory.exactMatchDates.length ? ` Exact prior dates: ${memory.exactMatchDates.join(", ")}.` : " No exact prior fingerprint is stored yet.";
+    const legacyNote = memory.excludedLegacySessions ? ` ${memory.excludedLegacySessions} older-formula session${memory.excludedLegacySessions === 1 ? " was" : "s were"} excluded from exact matching.` : "";
     const gapRule = quality.status === "GAP-AWARE" ? " Missing intervals were excluded from deltas and range detection; no values were filled or interpolated." : "";
-    el.memoryFooter.textContent = `Formula ${playbook.formulaVersion}. Levels use the same ATM ±11 max-OI walls as Market Structure Intelligence.${gapRule}${matchDates}`;
+    const majorContext = closing.majorSupport && closing.majorResistance
+      ? ` Major walls: PE ${price(closing.majorSupport.strike, 0)}, CE ${price(closing.majorResistance.strike, 0)}.`
+      : "";
+    el.memoryFooter.textContent = `Formula ${playbook.formulaVersion}. Levels use the same nearest-3-strike max-OI rule as Market Structure Intelligence.${majorContext}${gapRule}${matchDates}${legacyNote}`;
   }
 
   function updateRecorderFromSave(recorder, snapshotTime) {
@@ -741,8 +746,9 @@
     el.structureState.textContent = read.state;
     el.structureLocation.innerHTML = [
       `<span>Spot <strong>${price(read.spot)}</strong></span>`,
-      `<span>OI Support <strong>${read.support ? `${price(read.support, 0)} · ${compact(read.supportWall.oi)}` : "Building"}</strong></span>`,
-      `<span>OI Resistance <strong>${read.resistance ? `${price(read.resistance, 0)} · ${compact(read.resistanceWall.oi)}` : "Building"}</strong></span>`,
+      `<span>Immediate Support <strong>${read.support ? `${price(read.support, 0)} · ${compact(read.supportWall.oi)}` : "Building"}</strong></span>`,
+      `<span>Immediate Resistance <strong>${read.resistance ? `${price(read.resistance, 0)} · ${compact(read.resistanceWall.oi)}` : "Building"}</strong></span>`,
+      `<span>Major OI Walls <strong>PE ${read.majorSupportWall ? price(read.majorSupportWall.strike, 0) : "--"} · CE ${read.majorResistanceWall ? price(read.majorResistanceWall.strike, 0) : "--"}</strong></span>`,
       `<span>${read.microRange ? `Range <strong>${price(read.microRange.width, 0)} pts · ${read.microRange.minutes}m</strong>` : "Range <strong>Not confirmed</strong>"}</span>`
     ].join("");
     renderPressureResponse(read.pressure);
@@ -1077,7 +1083,7 @@
       addDiscreteStructureEvent({
         id: `${bucket}:support-migration:${previous.support}:${current.support}`,
         category: "migration",
-        title: "SUPPORT WALL MIGRATED",
+        title: "IMMEDIATE SUPPORT MIGRATED",
         tone: current.support > previous.support ? "positive" : "negative",
         details: `PE wall ${price(previous.support, 0)} → ${price(current.support, 0)} · OI ${compact(read.supportWall.oi)}`,
         meaning: `(The maximum PE OI wall shifted ${current.support > previous.support ? "higher" : "lower"} and held across completed windows)`,
@@ -1088,7 +1094,7 @@
       addDiscreteStructureEvent({
         id: `${bucket}:resistance-migration:${previous.resistance}:${current.resistance}`,
         category: "migration",
-        title: "RESISTANCE WALL MIGRATED",
+        title: "IMMEDIATE RESISTANCE MIGRATED",
         tone: current.resistance > previous.resistance ? "positive" : "negative",
         details: `CE wall ${price(previous.resistance, 0)} → ${price(current.resistance, 0)} · OI ${compact(read.resistanceWall.oi)}`,
         meaning: `(The maximum CE OI wall shifted ${current.resistance > previous.resistance ? "higher" : "lower"} and held across completed windows)`,
@@ -1273,6 +1279,8 @@
     const openingResistance = buildOpeningWall(openingSnapshots, "CE", step);
     const supportWall = resolveStableOiWall(latest, "PE", openingSupport, step);
     const resistanceWall = resolveStableOiWall(latest, "CE", openingResistance, step);
+    const majorSupportWall = findMaxOiWall(latest.rows, latest.spot, "PE", step);
+    const majorResistanceWall = findMaxOiWall(latest.rows, latest.spot, "CE", step);
     const support = supportWall ? supportWall.strike : 0;
     const resistance = resistanceWall ? resistanceWall.strike : 0;
     const contracts = buildStructureContracts(latest, openingSnapshots, support, resistance);
@@ -1286,6 +1294,8 @@
       resistance,
       supportWall,
       resistanceWall,
+      majorSupportWall,
+      majorResistanceWall,
       contracts,
       microRange,
       location,
@@ -1308,6 +1318,8 @@
       microRange,
       supportWall,
       resistanceWall,
+      majorSupportWall,
+      majorResistanceWall,
       pressure
     };
   }
@@ -1476,8 +1488,8 @@
   function pressureWallMigration(latest, structure) {
     const reference = getOlderSnapshot(900);
     if (!reference) return { value: "15m history building", tone: "neutral" };
-    const oldSupport = findMaxOiWall(reference.rows, reference.spot, "PE", structure.step);
-    const oldResistance = findMaxOiWall(reference.rows, reference.spot, "CE", structure.step);
+    const oldSupport = findImmediateOiLevel(reference.rows, reference.spot, "PE", structure.step);
+    const oldResistance = findImmediateOiLevel(reference.rows, reference.spot, "CE", structure.step);
     if (!oldSupport || !oldResistance || !structure.support || !structure.resistance) {
       return { value: "Wall history incomplete", tone: "neutral" };
     }
@@ -1565,8 +1577,8 @@
       };
     });
     const spot = median(snapshots.map((snapshot) => snapshot.spot));
-    const wall = findMaxOiWall(rows, spot, side, step);
-    return wall ? { ...wall, source: "opening median max OI", stable: true, confirmations: 1 } : null;
+    const wall = findImmediateOiLevel(rows, spot, side, step);
+    return wall ? { ...wall, source: "opening nearest-3-strike max OI", stable: true, confirmations: 1 } : null;
   }
 
   function findMaxOiWall(rows, spot, side, step) {
@@ -1595,17 +1607,41 @@
     };
   }
 
+  function findImmediateOiLevel(rows, spot, side, step) {
+    const isSupport = side === "PE";
+    const candidates = rows.filter((row) => (
+      isSupport
+        ? row.strike <= spot && spot - row.strike <= step * IMMEDIATE_WALL_STRIKES
+        : row.strike >= spot && row.strike - spot <= step * IMMEDIATE_WALL_STRIKES
+    )).map((row) => {
+      const option = isSupport ? row.pe : row.ce;
+      return { strike: row.strike, oi: option.oi };
+    }).filter((item) => item.oi > 0)
+      .sort((a, b) => b.oi - a.oi || Math.abs(a.strike - spot) - Math.abs(b.strike - spot));
+    const immediate = candidates[0];
+    if (immediate) {
+      return {
+        ...immediate,
+        significant: true,
+        selection: "nearest-three-strike-max-oi",
+        scannedStrikes: candidates.length
+      };
+    }
+    const fallback = findMaxOiWall(rows, spot, side, step);
+    return fallback ? { ...fallback, selection: "absolute-max-fallback" } : null;
+  }
+
   function resolveStableOiWall(latest, side, openingWall, step) {
-    const current = findMaxOiWall(latest.rows, latest.spot, side, step);
+    const current = findImmediateOiLevel(latest.rows, latest.spot, side, step);
     if (!current) return null;
     const snapshots = completedWindowSnapshots(latest.time, 3);
     const candidates = snapshots
-      .map((snapshot) => findMaxOiWall(snapshot.rows, snapshot.spot, side, step))
+      .map((snapshot) => findImmediateOiLevel(snapshot.rows, snapshot.spot, side, step))
       .filter(Boolean);
     const confirmations = candidates.filter((wall) => wall.strike === current.strike).length;
     return {
       ...current,
-      source: confirmations >= 2 ? "dynamic max OI · completed 5m confirmed" : "dynamic max OI",
+      source: confirmations >= 2 ? "nearest-3-strike max OI · completed 5m confirmed" : "nearest-3-strike max OI",
       stable: confirmations >= 2,
       confirmations,
       openingStrike: openingWall ? openingWall.strike : null
@@ -1893,7 +1929,7 @@
     else if (openingSpot > resistanceWall.strike) location = `Opened above ${price(resistanceWall.strike, 0)} resistance`;
     else if (supportDistance <= nearDistance && supportDistance <= resistanceDistance) location = `Opened near ${price(supportWall.strike, 0)} support`;
     else if (resistanceDistance <= nearDistance) location = `Opened near ${price(resistanceWall.strike, 0)} resistance`;
-    return `${gapText} · ${location} · max PE/CE OI walls inside ATM ±${WALL_SCAN_STRIKES}`;
+    return `${gapText} · ${location} · immediate max OI inside nearest ${IMMEDIATE_WALL_STRIKES} strikes; major walls scan ATM ±${WALL_SCAN_STRIKES}`;
   }
 
   function interpretMarketStructure(input) {
@@ -2049,7 +2085,7 @@
       state: stateLabel,
       decision,
       tone,
-      headline: `${location} · ${microRange ? `${price(microRange.low, 0)}–${price(microRange.high, 0)} · ${microRange.minutes}m confirmed range` : `ATM ±${WALL_SCAN_STRIKES} max-OI wall read`}`,
+      headline: `${location} · ${microRange ? `${price(microRange.low, 0)}–${price(microRange.high, 0)} · ${microRange.minutes}m confirmed range` : `nearest-3-strike OI levels · major walls kept as context`}`,
       evidence,
       trigger,
       invalidation,

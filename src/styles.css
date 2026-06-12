@@ -550,7 +550,7 @@ input {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   margin: 16px 0 12px;
 }
 
@@ -1694,12 +1694,13 @@ td {
     border-bottom: 1px solid var(--line);
   }
 
-  .structure-location span:nth-child(2) {
+  .structure-location span:nth-child(even) {
     border-right: 0;
   }
 
-  .structure-location span:nth-last-child(-n + 2) {
+  .structure-location span:last-child {
     border-bottom: 0;
+    grid-column: 1 / -1;
   }
 
   .pressure-read-heading {
