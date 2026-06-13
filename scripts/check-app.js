@@ -258,7 +258,7 @@ if (!accepted.acceptedBreak) {
 const sessionPlaybook = fs.readFileSync(path.resolve(__dirname, "..", "lib/session-playbook.js"), "utf8");
 for (const guard of [
   "session-memory-v3-immediate-oi-shelves",
-  "IMMEDIATE_WALL_STRIKES = 3",
+  "IMMEDIATE_WALL_STRIKES = 11",
   "WALL_SCAN_STRIKES = 11",
   "MAX_CONFIRMED_RANGE_POINTS = 100",
   "findMaxOiWall",
@@ -320,7 +320,7 @@ if (regressionStep !== 50 || regressionSupport.strike !== 23100 || regressionRes
 
 const regressionImmediateSupport = findImmediateOiLevel(regressionRows, 23202.9, "PE", regressionStep);
 const regressionImmediateResistance = findImmediateOiLevel(regressionRows, 23202.9, "CE", regressionStep);
-if (regressionImmediateSupport.strike !== 23100 || regressionImmediateResistance.strike !== 23300) {
+if (regressionImmediateSupport.strike !== 23100 || regressionImmediateResistance.strike !== 23500) {
   console.error("Immediate OI shelf regression failed");
   process.exit(1);
 }
@@ -340,8 +340,8 @@ const distantMajorRows = [
 ];
 const distantMajor = findMaxOiWall(distantMajorRows, 23420, "PE", 50);
 const immediateShelf = findImmediateOiLevel(distantMajorRows, 23420, "PE", 50);
-if (distantMajor.strike !== 23000 || immediateShelf.strike !== 23400) {
-  console.error("Distant major wall must not replace immediate support shelf");
+if (distantMajor.strike !== 23000 || immediateShelf.strike !== 23000) {
+  console.error("Distant major wall must replace immediate support shelf under ATM ±11 strikes rule");
   process.exit(1);
 }
 
@@ -390,7 +390,7 @@ const regressionPlaybook = buildSessionPlaybook({
 });
 if (
   regressionPlaybook.closing.support.strike !== 23100
-  || regressionPlaybook.closing.resistance.strike !== 23300
+  || regressionPlaybook.closing.resistance.strike !== 23500
   || regressionPlaybook.closing.majorResistance.strike !== 23500
   || regressionPlaybook.closing.confirmedRange.width !== 65
   || regressionPlaybook.scenarios.length !== 5

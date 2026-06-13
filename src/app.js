@@ -17,7 +17,7 @@
   const EVENT_STORAGE_VERSION = 2;
   const EVENT_MAX_ITEMS = 80;
   const WALL_SCAN_STRIKES = 11;
-  const IMMEDIATE_WALL_STRIKES = 3;
+  const IMMEDIATE_WALL_STRIKES = 11;
   const MAX_CONFIRMED_RANGE_POINTS = 100;
   const STRUCTURE_WINDOWS = [
     { key: "open", label: "Open", seconds: null },
@@ -385,7 +385,7 @@
     const majorContext = closing.majorSupport && closing.majorResistance
       ? ` Major walls: PE ${price(closing.majorSupport.strike, 0)}, CE ${price(closing.majorResistance.strike, 0)}.`
       : "";
-    el.memoryFooter.textContent = `Formula ${playbook.formulaVersion}. Levels use the same nearest-3-strike max-OI rule as Market Structure Intelligence.${majorContext}${gapRule}${matchDates}${legacyNote}`;
+    el.memoryFooter.textContent = `Formula ${playbook.formulaVersion}. Levels use the same nearest-11-strike max-OI rule as Market Structure Intelligence.${majorContext}${gapRule}${matchDates}${legacyNote}`;
   }
 
   function updateRecorderFromSave(recorder, snapshotTime) {
@@ -1993,7 +1993,7 @@
     });
     const spot = median(snapshots.map((snapshot) => snapshot.spot));
     const wall = findImmediateOiLevel(rows, spot, side, step);
-    return wall ? { ...wall, source: "opening nearest-3-strike max OI", stable: true, confirmations: 1 } : null;
+    return wall ? { ...wall, source: "opening nearest-11-strike max OI", stable: true, confirmations: 1 } : null;
   }
 
   function findMaxOiWall(rows, spot, side, step) {
@@ -2041,7 +2041,7 @@
         significant: !secondOi || immediate.oi > secondOi,
         secondOi,
         dominance: secondOi ? immediate.oi / secondOi : 1,
-        selection: "nearest-three-strike-max-oi",
+        selection: "nearest-eleven-strike-max-oi",
         scannedStrikes: candidates.length
       };
     }
@@ -2059,7 +2059,7 @@
     const confirmations = candidates.filter((wall) => wall.strike === current.strike).length;
     return {
       ...current,
-      source: confirmations >= 2 ? "nearest-3-strike max OI · completed 5m confirmed" : "nearest-3-strike max OI",
+      source: confirmations >= 2 ? "nearest-11-strike max OI · completed 5m confirmed" : "nearest-11-strike max OI",
       stable: confirmations >= 2,
       confirmations,
       openingStrike: openingWall ? openingWall.strike : null
@@ -2530,7 +2530,7 @@
       state: stateLabel,
       decision,
       tone,
-      headline: `${location} · ${microRange ? `${price(microRange.low, 0)}–${price(microRange.high, 0)} · ${microRange.minutes}m confirmed range` : `nearest-3-strike OI levels · major walls kept as context`}`,
+      headline: `${location} · ${microRange ? `${price(microRange.low, 0)}–${price(microRange.high, 0)} · ${microRange.minutes}m confirmed range` : `nearest-11-strike OI levels · major walls kept as context`}`,
       evidence,
       trigger,
       invalidation,
