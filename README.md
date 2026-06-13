@@ -6,12 +6,15 @@ Formula-backed intraday option-chain dashboard for Indian index option buyers. I
 
 - Market Structure Intelligence: one dynamic card detects opening location, highest actual PE/CE OI inside the nearest three directional strikes, separate ATM ±11 absolute max-OI major walls, confirmed ranges, support/resistance tests, and directional inventory pressure.
 - A range is confirmed only from completed 5m candles: up to 100 points wide, at least 20 minutes old, with repeated upper/lower interaction and direction changes.
-- Support, ATM, and resistance contracts show current OI/mid plus actual Open, 5m, 15m, and 30m OI and premium changes.
-- Material OI plus delta-adjusted premium residual classifies concise writing, long buildup, short covering, and long-unwinding behavior inside the same card.
-- Premium confirmation uses bid/ask midpoint, starting-delta adjustment, and common CE/PE volatility removal instead of raw LTP direction alone.
+- Support, ATM, and resistance contracts show current OI/mid plus actual Open, 5m, 10m, 15m, and 30m OI and premium changes with percentage change.
+- Material OI plus Greek-adjusted premium residual infers writing-like, long-buildup-like, short-covering-like, and long-unwinding-like behavior inside the same card.
+- Premium confirmation uses bid/ask midpoint and delta, gamma, vega/IV, and elapsed-theta attribution instead of raw LTP direction alone.
+- A compact qualification row reports wall stability, writing-like defence, whether spot remains on the defended side, and the actual five-minute spot reaction. It reports evidence gates, not a fabricated probability.
+- Participation uses actual ATM ±3 option-volume deltas. The nearest monthly index-future volume is fetched automatically and shown only as secondary confirmation; index volume is never used.
+- Five-Session Resistance Memory reconstructs an unaccepted option-strike ceiling from the previous five completed DB sessions, then separates CE writing effectiveness, absorption, rejected breaks, one-close break candidates, and two-close accepted breakouts.
 - Auto expiry fetch from Upstox option contracts; nearest expiry is selected automatically.
 - Index selector includes NIFTY50, BANKNIFTY, FINNIFTY, and SENSEX.
-- Timeframe matrix: 1m, 3m, 5m, 15m, 30m, and since-open comparison.
+- Timeframe matrix: 1m, 3m, 5m, 10m, 15m, 30m, and since-open comparison.
 - Calibration Lab: browser-local session recorder, 3m/5m/10m outcome tracking, and threshold suggestions.
 - Outcome Tracker and Formula Rulebook stay collapsed until opened.
 - Mobile responsive layout.
@@ -76,6 +79,7 @@ Window rules are fixed:
 ```text
 Open = current value - 09:15-09:20 opening median
 5m   = current value - closest snapshot around current time minus 5 minutes
+10m  = current value - closest snapshot around current time minus 10 minutes
 15m  = current value - closest snapshot around current time minus 15 minutes
 30m  = current value - closest snapshot around current time minus 30 minutes
 ```
@@ -86,12 +90,25 @@ The rolling windows allow at most 45 seconds of timestamp difference. If a valid
 
 The Market Structure card also compares material five-minute option inventory with the spot response:
 
-- scans ATM ±3 strikes and keeps only contracts whose OI change and delta-adjusted premium residual are both material versus the ATM ±11 cross-section
+- scans ATM ±3 strikes and keeps only contracts whose OI change and Greek-adjusted premium residual are both material versus the ATM ±11 cross-section
 - maps CE/PE buildup, writing, covering, and long exit into directional inventory without assigning an arbitrary weighted score
 - compares directional spot displacement with the session median absolute 5m move to label release, partial response, or absorption
 - tracks 15m max-OI wall migration, OI load across the next three strikes, and CE-to-PE inventory role reversal at a crossed strike
 
 The narrative is an inferred market-mechanics explanation, not proof of an external news or event-driven cause.
+
+### Five-Session Resistance Memory
+
+The dedicated resistance card uses actual completed five-minute DB candles and current-expiry CE inventory:
+
+- a historical test is an approach from below into the upper half-strike band; repeated tests are counted as separate visits only after price leaves that band
+- an accepted historical or live break requires two consecutive completed five-minute closes above the exact option strike
+- same-expiry previous-close CE OI is shown separately; OI from different expiries is never added or treated as continuous
+- `RESISTANCE REINFORCED` requires persistent writing-like CE flow and an actual downside spot reaction
+- persistent writing without downside response becomes `WRITING ABSORBED`, a breakout-risk warning rather than stronger resistance
+- one close above is only `BREAK CANDIDATE`; a return below with renewed writing-like flow becomes `BREAKOUT REJECTED`
+
+The card reports observed states and invalidation. It does not claim that an unbroken historical ceiling cannot break in the future.
 
 ### Floating Structure Event Center
 

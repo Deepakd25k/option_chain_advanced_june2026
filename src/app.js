@@ -3,6 +3,7 @@
     { key: "60", label: "1m", seconds: 60 },
     { key: "180", label: "3m", seconds: 180 },
     { key: "300", label: "5m", seconds: 300 },
+    { key: "600", label: "10m", seconds: 600 },
     { key: "900", label: "15m", seconds: 900 },
     { key: "1800", label: "30m", seconds: 1800 },
     { key: "open", label: "Open", seconds: null }
@@ -21,6 +22,7 @@
   const STRUCTURE_WINDOWS = [
     { key: "open", label: "Open", seconds: null },
     { key: "300", label: "5m", seconds: 300 },
+    { key: "600", label: "10m", seconds: 600 },
     { key: "900", label: "15m", seconds: 900 },
     { key: "1800", label: "30m", seconds: 1800 }
   ];
@@ -38,6 +40,10 @@
     },
     signalStartSnapshot: null,
     structureRead: null,
+    resistanceMemory: null,
+    resistanceMemoryReason: "Loading five-session DB history",
+    resistanceMemoryKey: null,
+    resistanceMemoryLastChecked: 0,
     sessionPlaybook: null,
     playbookLastChecked: 0,
     eventTape: freshEventTapeState(),
@@ -76,12 +82,15 @@
     [
       "sourceLine", "recorderStatus", "refreshButton", "pauseButton", "symbolSelect", "expiryInput",
       "activeWindow", "refreshInterval", "marketStructureCard", "structureHeadline", "structureOrigin",
-      "structureState", "structureLocation", "structureTable", "structureEvidence", "structureDecision",
+      "structureState", "structureLocation", "structureQualification", "structureAnalytics", "structureTable", "structureEvidence", "structureDecision",
       "structureLevels", "structureStability", "pressureHeadline", "pressureVerdict", "pressureMetrics",
       "pressureNarrative", "matrixTable",
       "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable", "sessionMemoryCard",
       "memoryHeadline", "memoryMeta", "memoryStatus", "memoryLearning", "memoryMapTitle",
       "memoryHistory", "memoryScenarios", "memoryFooter", "eventCenterButton", "eventUnreadCount",
+      "resistanceMemoryCard", "resistanceMemoryHeadline", "resistanceMemoryMeta", "resistanceMemoryState",
+      "resistanceMemoryStrip", "resistanceMemoryGrid", "resistanceMemoryTimeline", "resistanceMemoryVerdict",
+      "resistanceMemoryMeaning", "resistanceMemoryInvalidation",
       "eventToastStack", "eventDrawerBackdrop", "eventDrawer", "eventDrawerClose", "eventDrawerSummary", "eventTape"
     ].forEach((id) => {
       el[id] = document.getElementById(id);
@@ -137,6 +146,10 @@
     state.sessionHydrated = false;
     state.stable = { key: null, since: null, confirmations: 0 };
     state.structureRead = null;
+    state.resistanceMemory = null;
+    state.resistanceMemoryReason = "Loading five-session DB history";
+    state.resistanceMemoryKey = null;
+    state.resistanceMemoryLastChecked = 0;
     state.sessionPlaybook = null;
     state.playbookLastChecked = 0;
     state.eventTape = freshEventTapeState();
@@ -194,6 +207,7 @@
       addSnapshot(snapshot);
       updateRecorderFromSave(payload.recorder, snapshot.time);
       render();
+      maybeLoadResistanceMemory(snapshot);
       maybeRefreshSessionPlaybook(snapshot.time);
       setSource(`${payload.source === "live" ? "Live Upstox REST" : "Demo mode"} · ${formatTime(snapshot.time)} · ${state.history.length} loaded`);
     } catch (error) {
@@ -204,6 +218,41 @@
         render();
       }
     }
+  }
+
+  async function loadResistanceMemory() {
+    const latest = lastSnapshot();
+    if (!latest || !latest.expiry || latest.expiry === "auto") return;
+    const step = Math.max(1, inferStrikeStep(latest.rows));
+    const key = `${latest.instrumentKey}:${latest.expiry}:${Math.round(latest.spot / step)}`;
+    state.resistanceMemoryKey = key;
+    state.resistanceMemoryLastChecked = Date.now();
+    try {
+      const params = new URLSearchParams({
+        instrument_key: latest.instrumentKey,
+        expiry_date: latest.expiry,
+        spot: String(latest.spot)
+      });
+      const response = await fetch(`/api/session/resistance-memory?${params.toString()}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(API_TIMEOUT_MS)
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || payload.reason || "Unable to load resistance memory");
+      state.resistanceMemory = payload.ready ? payload.memory : null;
+      state.resistanceMemoryReason = payload.reason || "";
+    } catch (error) {
+      state.resistanceMemory = null;
+      state.resistanceMemoryReason = error.name === "TimeoutError" ? "Resistance memory request timed out" : error.message;
+    }
+    renderResistanceMemory(latest);
+  }
+
+  function maybeLoadResistanceMemory(latest) {
+    const step = Math.max(1, inferStrikeStep(latest.rows));
+    const key = `${latest.instrumentKey}:${latest.expiry}:${Math.round(latest.spot / step)}`;
+    if (state.resistanceMemoryKey === key && Date.now() - state.resistanceMemoryLastChecked < 5 * 60 * 1000) return;
+    loadResistanceMemory();
   }
 
   async function hydrateSessionHistory() {
@@ -470,6 +519,7 @@
       spot,
       dayOpen,
       previousClose,
+      future: normalizeFuture(payload.future),
       rows,
       atm,
       atmStrike: atm ? atm.strike : 0,
@@ -481,6 +531,22 @@
       callOiChange,
       putOiChange,
       walls: findWalls(rows, spot)
+    };
+  }
+
+  function normalizeFuture(future) {
+    if (!future || typeof future !== "object") return null;
+    const volume = number(future.volume);
+    const oi = number(future.oi);
+    if (!future.instrumentKey && !volume && !oi) return null;
+    return {
+      instrumentKey: future.instrumentKey || future.instrument_key || "",
+      symbol: future.symbol || future.tradingSymbol || future.trading_symbol || "Index future",
+      expiry: future.expiry || "",
+      ltp: number(future.ltp || future.lastPrice || future.last_price),
+      volume,
+      oi,
+      timestamp: future.timestamp || null
     };
   }
 
@@ -563,6 +629,7 @@
     }
     saveCalibrationState();
     renderMarketStructure(structureRead);
+    renderResistanceMemory(latest);
     updateStructureEventTape(structureRead, latest);
     renderMatrix();
     renderCalibrationLab();
@@ -751,7 +818,9 @@
       `<span>Major OI Walls <strong>PE ${read.majorSupportWall ? price(read.majorSupportWall.strike, 0) : "--"} · CE ${read.majorResistanceWall ? price(read.majorResistanceWall.strike, 0) : "--"}</strong></span>`,
       `<span>${read.microRange ? `Range <strong>${price(read.microRange.width, 0)} pts · ${read.microRange.minutes}m</strong>` : "Range <strong>Not confirmed</strong>"}</span>`
     ].join("");
+    renderStructureQualification(read);
     renderPressureResponse(read.pressure);
+    renderStructureAnalytics(read);
     el.structureTable.innerHTML = `
       <div class="structure-table-head">
         <span>Contract</span>${STRUCTURE_WINDOWS.map((item) => `<span>${item.label}</span>`).join("")}
@@ -771,6 +840,349 @@
     el.structureStability.textContent = read.stability.windows
       ? `${read.stability.restored ? "DB restored · " : ""}Stable ${read.stability.windows} completed 5m window${read.stability.windows === 1 ? "" : "s"}`
       : "Completed 5m confirmation building";
+  }
+
+  function renderResistanceMemory(latest) {
+    const memory = state.resistanceMemory;
+    if (!memory) {
+      el.resistanceMemoryCard.dataset.tone = "building";
+      el.resistanceMemoryHeadline.textContent = "Five-session resistance memory unavailable";
+      el.resistanceMemoryMeta.textContent = state.resistanceMemoryReason || "Waiting for completed DB sessions";
+      el.resistanceMemoryState.textContent = "BUILDING";
+      el.resistanceMemoryState.className = "resistance-memory-state building";
+      el.resistanceMemoryStrip.innerHTML = ["Level", "Tests", "Accepted breaks", "Distance"]
+        .map((label) => `<span>${label} <strong>--</strong></span>`).join("");
+      el.resistanceMemoryGrid.innerHTML = `
+        <section><span>Historical ceiling</span><strong>Exact sessions required</strong><em>No level is fabricated without DB tests</em></section>
+        <section><span>Current CE inventory</span><strong>Waiting for level</strong><em>Cross-expiry OI will never be added</em></section>
+        <section><span>Defence effectiveness</span><strong>Unproven</strong><em>Writing requires an actual spot rejection</em></section>
+      `;
+      el.resistanceMemoryTimeline.innerHTML = "";
+      el.resistanceMemoryVerdict.textContent = "WAIT FOR HISTORICAL MEMORY";
+      el.resistanceMemoryMeaning.textContent = "A high CE OI value alone is not treated as resistance.";
+      el.resistanceMemoryInvalidation.textContent = "Accepted break = two consecutive completed 5m closes above the level.";
+      return;
+    }
+
+    const read = buildCurrentResistanceRead(latest, memory);
+    el.resistanceMemoryCard.dataset.tone = read.tone;
+    el.resistanceMemoryHeadline.textContent = `${memory.lookbackSessions}D CEILING · ${price(memory.level, 0)} · ${read.headline}`;
+    const expiryText = memory.expiryContinuity === "same-expiry"
+      ? `Same-expiry OI continuity from ${memory.sameExpiryPreviousClose.sessionDate}`
+      : "Expiry reset · historical OI is not added to current expiry";
+    el.resistanceMemoryMeta.textContent = `${expiryText} · historical spot acceptance remains comparable`;
+    el.resistanceMemoryState.textContent = read.state;
+    el.resistanceMemoryState.className = `resistance-memory-state ${read.tone}`;
+    el.resistanceMemoryStrip.innerHTML = [
+      `<span>Level <strong>${price(memory.level, 0)}</strong></span>`,
+      `<span>Historical <strong>${memory.defendedSessions}/${memory.testedSessions} defended · ${memory.totalTests} tests</strong></span>`,
+      `<span>Accepted breaks <strong>${memory.acceptedBreakSessions}/${memory.lookbackSessions} sessions</strong></span>`,
+      `<span>Distance <strong>${signed(memory.level - latest.spot)} pts</strong></span>`
+    ].join("");
+    el.resistanceMemoryGrid.innerHTML = `
+      <section class="${memory.acceptedBreakSessions ? "warn" : "positive"}">
+        <span>Historical ceiling</span>
+        <strong>${memory.testedSessions} tested session${memory.testedSessions === 1 ? "" : "s"} · ${memory.defendedSessions} defended</strong>
+        <em>Last test ${memory.lastTestDate || "--"} · acceptance ${memory.acceptedBreakSessions ? "observed" : "not observed"}</em>
+      </section>
+      <section class="${read.inventoryTone}">
+        <span>Current ${price(memory.level, 0)} CE inventory</span>
+        <strong>${escapeHtml(read.oiHeadline)}</strong>
+        <em>${escapeHtml(read.oiWindows)}</em>
+      </section>
+      <section class="${read.effectTone}">
+        <span>Defence effectiveness</span>
+        <strong>${escapeHtml(read.effectHeadline)}</strong>
+        <em>${escapeHtml(read.effectDetail)}</em>
+      </section>
+    `;
+    el.resistanceMemoryTimeline.innerHTML = memory.sessionEvidence.map((session) => {
+      const stateLabel = session.acceptedBreak
+        ? "Accepted above"
+        : session.rejectedBreak
+          ? "False break rejected"
+          : session.tests
+            ? `${session.tests} test${session.tests === 1 ? "" : "s"} defended`
+            : "Not tested";
+      const tone = session.acceptedBreak ? "negative" : session.tests ? "positive" : "neutral";
+      return `<span class="${tone}"><b>${escapeHtml(session.date)}</b>${escapeHtml(stateLabel)}</span>`;
+    }).join("");
+    el.resistanceMemoryVerdict.textContent = read.verdict;
+    el.resistanceMemoryMeaning.textContent = read.meaning;
+    el.resistanceMemoryInvalidation.textContent = `Accepted breakout only after 2 consecutive completed 5m closes above ${price(memory.level, 0)}.`;
+  }
+
+  function buildCurrentResistanceRead(latest, memory) {
+    const level = memory.level;
+    const row = latest.rows.find((item) => item.strike === level);
+    if (!row) return resistanceRead("LEVEL OUTSIDE CURRENT CHAIN", "Historical level is not present in the current option chain", "neutral");
+    const opening = openingBaselineSnapshots(latest);
+    const windows = {
+      open: buildStructureWindow(latest, opening, level, "CE", null),
+      "300": buildStructureWindow(latest, opening, level, "CE", 300),
+      "600": buildStructureWindow(latest, opening, level, "CE", 600),
+      "900": buildStructureWindow(latest, opening, level, "CE", 900),
+      "1800": buildStructureWindow(latest, opening, level, "CE", 1800)
+    };
+    const inventoryReads = ["300", "600", "900"].map((key) => ({
+      key,
+      window: windows[key],
+      inventory: windows[key] && windows[key].available ? inventoryWindowRead(windows[key], "CE") : null
+    }));
+    const writingWindows = inventoryReads.filter((item) => item.inventory && item.inventory.clean && item.inventory.type === "writing");
+    const coveringWindows = inventoryReads.filter((item) => item.inventory && item.inventory.clean && item.inventory.type === "covering");
+    const test = currentResistanceTest(latest, level, memory.step);
+    const distance = level - latest.spot;
+    const near = Math.abs(distance) <= memory.step / 2;
+    const approaching = distance >= 0 && distance <= memory.step;
+    const recent = windows["300"];
+    const open = windows.open;
+    const previous = memory.expiryContinuity === "same-expiry" ? memory.sameExpiryPreviousClose : null;
+    const previousText = previous ? `Prev close ${compact(previous.ceOi)}` : "Prev OI reset";
+    const openText = open.available ? `Open ${compact(open.oiChange)} (${signedPercent(open.oiChangePct)})` : "Open building";
+    const recentText = recent.available ? `5m ${compact(recent.oiChange)} (${signedPercent(recent.oiChangePct)})` : "5m building";
+    const oiHeadline = `OI ${compact(row.ce.oi)} · ${previousText} · ${openText}`;
+    const oiWindows = `${recentText} · ${windowInventoryLabel(inventoryReads, "600", "10m")} · ${windowInventoryLabel(inventoryReads, "900", "15m")}`;
+    const persistence = writingWindows.length
+      ? `${writingWindows.map((item) => `${Number(item.key) / 60}m`).join("/")} writing-like`
+      : coveringWindows.length
+        ? `${coveringWindows.map((item) => `${Number(item.key) / 60}m`).join("/")} short-covering-like`
+        : "No persistent directional CE flow";
+    const response = test.lastTestClose === null
+      ? "No current-session test"
+      : test.rejection
+        ? `Rejected · spot ${signed(latest.spot - test.lastTestClose)} pts after latest test`
+        : `No downside release · spot ${signed(latest.spot - test.lastTestClose)} pts after latest test`;
+
+    let result;
+    if (test.acceptedBreak) {
+      result = resistanceRead("ACCEPTED BREAKOUT", "Two consecutive completed 5m closes accepted above the historical ceiling", "negative");
+    } else if (test.breakCandidate) {
+      result = resistanceRead("BREAK CANDIDATE", "One completed 5m close is above resistance; the second close decides acceptance", "warn");
+    } else if (test.rejectedBreak && writingWindows.length) {
+      result = resistanceRead("BREAKOUT REJECTED", "A close above failed, spot returned below, and CE writing-like flow reappeared", "positive");
+    } else if (writingWindows.length >= 2 && test.rejection) {
+      result = resistanceRead("RESISTANCE REINFORCED", "Persistent CE writing-like flow produced an actual downside spot response", "positive");
+    } else if (writingWindows.length >= 2 && (near || test.tests > 0)) {
+      result = resistanceRead("WRITING ABSORBED", "Persistent CE writing-like flow has not produced downside release; breakout risk is rising", "warn");
+    } else if (coveringWindows.length && (near || approaching)) {
+      result = resistanceRead("RESISTANCE WEAKENING", "CE short-covering-like flow is reducing resistance inventory near the ceiling", "negative");
+    } else if (test.tests > 0 || near) {
+      result = resistanceRead("RESISTANCE TESTING", "Spot is testing the historical ceiling; inventory persistence is not qualified yet", "warn");
+    } else if (approaching) {
+      result = resistanceRead("APPROACHING RESISTANCE", "Spot is within one strike of the historical ceiling", "neutral");
+    } else {
+      result = resistanceRead("HISTORICAL CEILING", "The level remains historical context until spot approaches it", "neutral");
+    }
+    return {
+      ...result,
+      headline: result.state,
+      oiHeadline,
+      oiWindows,
+      inventoryTone: writingWindows.length ? "positive" : coveringWindows.length ? "negative" : "neutral",
+      effectHeadline: `${persistence} · ${test.tests} current test${test.tests === 1 ? "" : "s"}`,
+      effectDetail: `${response} · ${test.closesAbove} completed close${test.closesAbove === 1 ? "" : "s"} above`,
+      effectTone: result.tone
+    };
+  }
+
+  function resistanceRead(stateLabel, meaning, tone) {
+    return { state: stateLabel, verdict: stateLabel, meaning, tone, headline: stateLabel, inventoryTone: "neutral", effectTone: tone };
+  }
+
+  function windowInventoryLabel(reads, key, label) {
+    const item = reads.find((entry) => entry.key === key);
+    if (!item || !item.window || !item.window.available) return `${label} building`;
+    return `${label} ${compact(item.window.oiChange)} · ${item.inventory && item.inventory.clean ? item.inventory.shortLabel : "mixed"}`;
+  }
+
+  function currentResistanceTest(latest, level, step) {
+    const source = state.candles5m.length ? state.candles5m : buildSnapshotFiveMinuteCandles(latest.time);
+    const candles = source.filter((candle) => istSessionDate(candle.start) === istSessionDate(latest.time)).sort((a, b) => a.start - b.start);
+    const approachFloor = level - step / 2;
+    let tests = 0;
+    let inTest = false;
+    let closesAbove = 0;
+    let acceptedBreak = false;
+    let hadCloseAbove = false;
+    let rejectedBreak = false;
+    let lastTestClose = null;
+    candles.forEach((candle, index) => {
+      const previousClose = index ? candles[index - 1].close : candle.open;
+      if (previousClose <= level && candle.high >= approachFloor && !inTest) {
+        tests += 1;
+        lastTestClose = candle.close;
+        inTest = true;
+      }
+      if (candle.high < approachFloor) inTest = false;
+      if (candle.close > level) {
+        closesAbove += 1;
+        hadCloseAbove = true;
+        if (index && candles[index - 1].close > level) acceptedBreak = true;
+      } else if (hadCloseAbove) {
+        rejectedBreak = true;
+      }
+    });
+    const latestClose = candles.length ? candles[candles.length - 1].close : latest.spot;
+    return {
+      tests,
+      closesAbove,
+      acceptedBreak,
+      breakCandidate: hadCloseAbove && !acceptedBreak && latestClose > level,
+      rejectedBreak: rejectedBreak && !acceptedBreak && latestClose <= level,
+      lastTestClose,
+      rejection: lastTestClose !== null && latestClose < lastTestClose && latestClose <= level
+    };
+  }
+
+  function renderStructureQualification(read) {
+    const support = qualifyStructureWall(read, "support");
+    const resistance = qualifyStructureWall(read, "resistance");
+    const pressure = read.pressure && read.pressure.eventData;
+    const pressureTone = pressure
+      ? pressure.oppositeMove ? "warn" : pressure.direction === "up" ? "positive" : "negative"
+      : "neutral";
+    const pressureStatus = pressure
+      ? `${pressure.direction === "up" ? "Upside" : "Downside"} · ${pressure.aligned}/${pressure.total} aligned`
+      : "Unproven";
+    const pressureDetail = pressure
+      ? `${read.pressure.verdict} · exact 5m flow`
+      : read.pressure && read.pressure.headline
+        ? read.pressure.headline
+        : "Waiting for aligned OI and premium response";
+    el.structureQualification.innerHTML = [
+      qualificationCell("Support", support.status, support.detail, support.tone),
+      qualificationCell("Current pressure", pressureStatus, pressureDetail, pressureTone),
+      qualificationCell("Resistance", resistance.status, resistance.detail, resistance.tone)
+    ].join("");
+  }
+
+  function qualificationCell(label, status, detail, tone) {
+    return `
+      <div class="${tone || "neutral"}">
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(status)}</strong>
+        <em>${escapeHtml(detail)}</em>
+      </div>
+    `;
+  }
+
+  function qualifyStructureWall(read, kind) {
+    const isSupport = kind === "support";
+    const wall = isSupport ? read.supportWall : read.resistanceWall;
+    const contract = read.contracts.find((item) => item.role.toLowerCase().includes(kind));
+    if (!wall || !contract) return { status: "Building", detail: "Exact wall history needed", tone: "neutral" };
+    const recent = contract.windows["300"];
+    const stable = wall.confirmations >= 2;
+    const recentInventory = recent && recent.available ? inventoryWindowRead(recent, contract.side) : null;
+    const fresh = recentInventory && recentInventory.clean && recentInventory.type === "writing";
+    const defended = isSupport ? read.spot >= wall.strike : read.spot <= wall.strike;
+    const reference = getOlderSnapshot(300);
+    const reacted = reference ? (isSupport ? read.spot > reference.spot : read.spot < reference.spot) : false;
+    const passed = [stable, fresh, defended, reacted].filter(Boolean).length;
+    const weakening = recent && recent.available && recent.materialOi && recent.oiChange < 0;
+    const breached = !defended;
+    const status = breached
+      ? `Breached · ${passed}/4 evidence`
+      : weakening
+        ? `Weakening · ${passed}/4 evidence`
+        : passed === 4
+          ? "Qualified · 4/4 evidence"
+          : `Building · ${passed}/4 evidence`;
+    const freshText = recent && recent.available
+      ? `5m ${compact(recent.oiChange)} (${signedPercent(recent.oiChangePct)}) · ${recentInventory && recentInventory.clean ? recentInventory.shortLabel : "mixed"}`
+      : "5m building";
+    return {
+      status,
+      detail: `${price(wall.strike, 0)} · ${wall.dominance.toFixed(2)}× local lead · ${freshText}`,
+      tone: breached || weakening ? "negative" : passed === 4 ? (isSupport ? "positive" : "negative") : "warn"
+    };
+  }
+
+  function renderStructureAnalytics(read) {
+    const atmPe = read.contracts.find((item) => item.strike === lastSnapshot().atmStrike && item.side === "PE");
+    const atmCe = read.contracts.find((item) => item.strike === lastSnapshot().atmStrike && item.side === "CE");
+    const participation = buildParticipationRead(lastSnapshot());
+    el.structureAnalytics.innerHTML = `
+      ${premiumAttributionCell("ATM CE response", atmCe && atmCe.windows["300"], "CE")}
+      ${premiumAttributionCell("ATM PE response", atmPe && atmPe.windows["300"], "PE")}
+      <div class="structure-analytic participation ${participation.tone}">
+        <span>Participation · ATM ±3</span>
+        <strong>${escapeHtml(participation.optionText)}</strong>
+        <em>${escapeHtml(participation.futureText)}</em>
+      </div>
+    `;
+  }
+
+  function premiumAttributionCell(label, windowRead, side) {
+    if (!windowRead || !windowRead.available) {
+      return `<div class="structure-analytic"><span>${label}</span><strong>Building</strong><em>Exact 5m Greek history needed</em></div>`;
+    }
+    const inventory = inventoryWindowRead(windowRead, side);
+    const tone = windowRead.residual > 0 ? "positive" : windowRead.residual < 0 ? "negative" : "neutral";
+    return `
+      <div class="structure-analytic ${tone}">
+        <span>${label}</span>
+        <strong>Actual ${signed(windowRead.premiumChange)} · Expected ${signed(windowRead.expectedChange)}</strong>
+        <em>Residual ${signed(windowRead.residual)} · ${escapeHtml(inventory.clean ? inventory.label : "No clean inferred flow")}</em>
+      </div>
+    `;
+  }
+
+  function buildParticipationRead(latest) {
+    const snapshots = [0, 300, 600, 900, 1200].map((seconds) => (
+      seconds === 0 ? latest : getOlderSnapshot(seconds)
+    ));
+    if (!snapshots[1]) {
+      return {
+        optionText: "Exact 5m volume history building",
+        futureText: latest.future ? "Futures baseline building" : "Index futures feed unavailable",
+        tone: "neutral"
+      };
+    }
+    const step = inferStrikeStep(latest.rows);
+    const strikes = latest.rows
+      .filter((row) => Math.abs(row.strike - latest.atmStrike) <= step * 3)
+      .map((row) => row.strike);
+    const windows = snapshots.slice(0, -1).map((current, index) => {
+      const reference = snapshots[index + 1];
+      if (!current || !reference) return null;
+      return {
+        ce: optionVolumeDelta(current, reference, strikes, "CE"),
+        pe: optionVolumeDelta(current, reference, strikes, "PE"),
+        future: futureVolumeDelta(current, reference)
+      };
+    }).filter(Boolean);
+    const current = windows[0];
+    const historyTotals = windows.slice(1).map((item) => item.ce + item.pe).filter((value) => value > 0);
+    const normal = median(historyTotals);
+    const total = current.ce + current.pe;
+    const participationRatio = normal ? total / normal : null;
+    const optionText = `CE ${compact(current.ce)} · PE ${compact(current.pe)}${participationRatio ? ` · ${participationRatio.toFixed(2)}× recent` : ""}`;
+    const futureText = current.future === null
+      ? "Index futures feed unavailable"
+      : `Futures volume +${compact(current.future)} / 5m (secondary confirmation)`;
+    return {
+      optionText,
+      futureText,
+      tone: participationRatio === null ? "neutral" : participationRatio >= 1 ? "positive" : "warn"
+    };
+  }
+
+  function optionVolumeDelta(current, reference, strikes, side) {
+    return strikes.reduce((total, strike) => {
+      const currentRow = current.rows.find((row) => row.strike === strike);
+      const referenceRow = reference.rows.find((row) => row.strike === strike);
+      if (!currentRow || !referenceRow) return total;
+      const currentOption = side === "CE" ? currentRow.ce : currentRow.pe;
+      const referenceOption = side === "CE" ? referenceRow.ce : referenceRow.pe;
+      return total + Math.max(0, currentOption.volume - referenceOption.volume);
+    }, 0);
+  }
+
+  function futureVolumeDelta(current, reference) {
+    if (!current.future || !reference.future || current.future.instrumentKey !== reference.future.instrumentKey) return null;
+    return Math.max(0, current.future.volume - reference.future.volume);
   }
 
   function renderPressureResponse(pressure) {
@@ -923,23 +1335,23 @@
 
   function inventoryTypeName(type) {
     return ({
-      "long-build": "long buildup",
-      writing: "writing",
-      covering: "short covering",
-      "long-unwind": "long unwind"
+      "long-build": "long-build-like",
+      writing: "writing-like",
+      covering: "short-covering-like",
+      "long-unwind": "long-unwind-like"
     })[type] || "material flow";
   }
 
   function wallInventoryMeaning(side, type, isSupport) {
     const meanings = {
-      "PE:writing": "(PE writers added at the stable support; this is support-defence evidence while spot holds)",
-      "PE:long-build": "(PE buyers added at the support strike; downside pressure is attacking the level)",
-      "PE:covering": "(PE shorts exited while premium strengthened; previous support-writing inventory weakened)",
-      "PE:long-unwind": "(PE buyers exited and premium weakened; bearish demand reduced even though OI fell)",
-      "CE:writing": "(CE writers added at the stable resistance; this is resistance-defence evidence while spot stays below)",
-      "CE:long-build": "(CE buyers added at the resistance strike; upside pressure is attacking the level)",
-      "CE:covering": "(CE shorts exited while premium strengthened; resistance inventory weakened)",
-      "CE:long-unwind": "(CE buyers exited and premium weakened; upside demand reduced even though OI fell)"
+      "PE:writing": "(OI and adjusted premium are consistent with PE writing at stable support; defence evidence while spot holds)",
+      "PE:long-build": "(OI and adjusted premium are consistent with PE buying; downside pressure is attacking support)",
+      "PE:covering": "(OI and adjusted premium are consistent with PE short covering; prior support-writing inventory may be weakening)",
+      "PE:long-unwind": "(OI and adjusted premium are consistent with PE long exit; bearish demand is reducing)",
+      "CE:writing": "(OI and adjusted premium are consistent with CE writing at stable resistance; defence evidence while spot stays below)",
+      "CE:long-build": "(OI and adjusted premium are consistent with CE buying; upside pressure is attacking resistance)",
+      "CE:covering": "(OI and adjusted premium are consistent with CE short covering; resistance inventory may be weakening)",
+      "CE:long-unwind": "(OI and adjusted premium are consistent with CE long exit; upside demand is reducing)"
     };
     return meanings[`${side}:${type}`] || `(Material ${side} inventory changed at the ${isSupport ? "support" : "resistance"} wall)`;
   }
@@ -1252,22 +1664,25 @@
           <em>OI ${compact(contract.currentOi)} · Mid ${price(contract.currentPremium)}</em>
           <b class="structure-inventory ${contract.inventory.tone}">${escapeHtml(contract.inventory.label)}</b>
         </div>
-        ${STRUCTURE_WINDOWS.map((item) => structureWindowCell(contract.windows[item.key], item.label)).join("")}
+        ${STRUCTURE_WINDOWS.map((item) => structureWindowCell(contract.windows[item.key], item.label, contract.side)).join("")}
       </div>
     `;
   }
 
-  function structureWindowCell(windowRead, label) {
+  function structureWindowCell(windowRead, label, side) {
     if (!windowRead || !windowRead.available) {
       return `<div class="structure-window building"><span>${label}</span><strong>Building</strong><em>Exact history needed</em></div>`;
     }
     const oiTone = windowRead.oiChange > 0 ? "positive" : windowRead.oiChange < 0 ? "negative" : "muted";
     const premiumTone = windowRead.premiumChange > 0 ? "positive" : windowRead.premiumChange < 0 ? "negative" : "muted";
+    const inventory = inventoryWindowRead(windowRead, side);
+    const residualTone = windowRead.residual > 0 ? "positive" : windowRead.residual < 0 ? "negative" : "muted";
     return `
       <div class="structure-window">
         <span>${label}${windowRead.oiRank ? ` · #${windowRead.oiRank}/${windowRead.universeSize}` : ""}</span>
         <strong class="${oiTone}">OI ${compact(windowRead.oiChange)} (${signedPercent(windowRead.oiChangePct)})</strong>
         <em class="${premiumTone}">Prem ${signed(windowRead.premiumChange)} (${signedPercent(windowRead.premiumChangePct)})</em>
+        <b class="${residualTone}">Adj ${signed(windowRead.residual)} · ${escapeHtml(inventory.clean ? inventory.shortLabel : "Mixed")}</b>
       </div>
     `;
   }
@@ -1367,7 +1782,7 @@
         headline: flows.length
           ? `SPLIT INVENTORY · ${bullish.length} upside vs ${bearish.length} downside contracts`
           : "NO MATERIAL INVENTORY IMPULSE",
-        verdict: "NO CAUSAL EDGE",
+        verdict: "NO OI-SUPPORTED EDGE",
         tone: "neutral",
         metrics: [
           pressureMetric("Flow breadth", `${bullish.length} up · ${bearish.length} down`, "neutral"),
@@ -1386,9 +1801,9 @@
     const oppositeMove = directionalSpotMove <= 0;
     const released = !oppositeMove && responseRatio !== null && responseRatio >= 1;
     const verdict = oppositeMove
-      ? "PRESSURE ABSORBED"
+      ? "OI PRESSURE ABSORBED"
       : released
-        ? "MOVE RELEASED"
+        ? "OI-SUPPORTED RELEASE"
         : "PARTIAL RESPONSE";
     const tone = oppositeMove || !released ? "warn" : direction === "up" ? "positive" : "negative";
     const responseText = responseRatio === null
@@ -1438,7 +1853,7 @@
         pressureMetric("Wall / role", "Building", "neutral"),
         pressureMetric("Path load", "Building", "neutral")
       ],
-      narrative: "The inferred move driver will appear only after material OI and delta-adjusted premium residual agree across multiple nearby contracts.",
+      narrative: "The inferred move driver will appear only after material OI and Greek-adjusted premium residual agree across multiple nearby contracts.",
       eventData: null
     };
   }
@@ -1461,14 +1876,14 @@
       return counts;
     }, {});
     const names = {
-      "CE:long-build": "CE long buildup",
-      "CE:writing": "CE writing",
-      "CE:covering": "CE short covering",
-      "CE:long-unwind": "CE long exit",
-      "PE:long-build": "PE long buildup",
-      "PE:writing": "PE writing",
-      "PE:covering": "PE short covering",
-      "PE:long-unwind": "PE long exit"
+      "CE:long-build": "CE long-build-like",
+      "CE:writing": "CE writing-like",
+      "CE:covering": "CE short-covering-like",
+      "CE:long-unwind": "CE long-exit-like",
+      "PE:long-build": "PE long-build-like",
+      "PE:writing": "PE writing-like",
+      "PE:covering": "PE short-covering-like",
+      "PE:long-unwind": "PE long-exit-like"
     };
     return Object.entries(labels)
       .sort((a, b) => b[1] - a[1])
@@ -1519,7 +1934,7 @@
     const loadRatio = localMedian ? targetAverage / localMedian : 0;
     const blocker = [...target].sort((a, b) => oi(b) - oi(a))[0];
     return {
-      value: `${loadRatio.toFixed(2)}× local · ${price(blocker.strike, 0)} blocker`,
+      value: `${loadRatio.toFixed(2)}× local OI · ${price(blocker.strike, 0)} blocker`,
       tone: loadRatio < 1 ? "positive" : loadRatio > 1 ? "warn" : "neutral"
     };
   }
@@ -1620,9 +2035,12 @@
       .sort((a, b) => b.oi - a.oi || Math.abs(a.strike - spot) - Math.abs(b.strike - spot));
     const immediate = candidates[0];
     if (immediate) {
+      const secondOi = candidates[1] ? candidates[1].oi : 0;
       return {
         ...immediate,
-        significant: true,
+        significant: !secondOi || immediate.oi > secondOi,
+        secondOi,
+        dominance: secondOi ? immediate.oi / secondOi : 1,
         selection: "nearest-three-strike-max-oi",
         scannedStrikes: candidates.length
       };
@@ -1712,21 +2130,21 @@
     const oiUp = windowRead.oiChange > 0;
     const premiumUp = windowRead.residual > 0;
     let type = "long-unwind";
-    let label = "Long unwind";
+    let label = "Long-unwind-like";
     if (oiUp && premiumUp) {
       type = "long-build";
-      label = "Long build";
+      label = "Long-build-like";
     } else if (oiUp && !premiumUp) {
       type = "writing";
-      label = "Writing";
+      label = "Writing-like";
     } else if (!oiUp && premiumUp) {
       type = "covering";
-      label = "Short covering";
+      label = "Short-covering-like";
     }
     const bullish = side === "CE"
       ? type === "long-build" || type === "covering"
       : type === "writing" || type === "long-unwind";
-    return { clean: true, label: `${side} ${label}`, type, tone: bullish ? "positive" : "negative" };
+    return { clean: true, label: `${side} ${label}`, shortLabel: label, type, tone: bullish ? "positive" : "negative" };
   }
 
   function structureContractTone(side, flowState) {
@@ -1746,24 +2164,12 @@
     const currentOption = currentRow ? (side === "CE" ? currentRow.ce : currentRow.pe) : null;
     if (!reference || !currentOption) return { available: false };
 
-    const premiumChange = currentOption.mid - reference.mid;
+    const attribution = greekPremiumAttribution(latest, currentOption, reference, side);
+    const premiumChange = attribution.actualChange;
     const oiChange = currentOption.oi - reference.oi;
     const oiChangePct = reference.oi ? oiChange / reference.oi : 0;
     const premiumChangePct = reference.mid ? premiumChange / reference.mid : 0;
-    const spotChange = latest.spot - reference.spot;
-    const signedDelta = side === "CE" ? reference.delta : -reference.delta;
-    const rawResidual = premiumChange - signedDelta * spotChange;
-    const oppositeSide = side === "CE" ? "PE" : "CE";
-    const oppositeReference = seconds === null
-      ? openingOptionReference(openingSnapshots, strike, oppositeSide)
-      : snapshotOptionReference(getOlderSnapshot(seconds), strike, oppositeSide);
-    const oppositeOption = side === "CE" ? currentRow.pe : currentRow.ce;
-    const oppositeSignedDelta = oppositeReference ? (oppositeSide === "CE" ? oppositeReference.delta : -oppositeReference.delta) : 0;
-    const oppositeResidual = oppositeReference
-      ? oppositeOption.mid - oppositeReference.mid - oppositeSignedDelta * (latest.spot - oppositeReference.spot)
-      : rawResidual;
-    const commonResidual = (rawResidual + oppositeResidual) / 2;
-    const residual = rawResidual - commonResidual;
+    const residual = attribution.residual;
     const universe = structureWindowUniverse(latest, openingSnapshots, side, seconds);
     const oiMagnitude = universe.map((item) => Math.abs(item.oiChange));
     const oiCenter = median(oiMagnitude);
@@ -1779,8 +2185,11 @@
       oiChangePct,
       premiumChangePct,
       residual,
-      rawResidual,
-      commonResidual,
+      expectedChange: attribution.expectedChange,
+      deltaTerm: attribution.deltaTerm,
+      gammaTerm: attribution.gammaTerm,
+      vegaTerm: attribution.vegaTerm,
+      thetaTerm: attribution.thetaTerm,
       oiRank: oiRank > 0 ? oiRank : null,
       universeSize: universe.length,
       materialOi: Math.abs(oiChange) > 0 && Math.abs(oiChange) >= oiCenter + oiMad,
@@ -1799,24 +2208,35 @@
         : snapshotOptionReference(getOlderSnapshot(seconds), row.strike, side);
       if (!reference) return null;
       const option = side === "CE" ? row.ce : row.pe;
-      const signedDelta = side === "CE" ? reference.delta : -reference.delta;
-      const premiumChange = option.mid - reference.mid;
-      const oppositeSide = side === "CE" ? "PE" : "CE";
-      const oppositeReference = seconds === null
-        ? openingOptionReference(openingSnapshots, row.strike, oppositeSide)
-        : snapshotOptionReference(getOlderSnapshot(seconds), row.strike, oppositeSide);
-      const oppositeOption = side === "CE" ? row.pe : row.ce;
-      const rawResidual = premiumChange - signedDelta * (latest.spot - reference.spot);
-      const oppositeSignedDelta = oppositeReference ? (oppositeSide === "CE" ? oppositeReference.delta : -oppositeReference.delta) : 0;
-      const oppositeResidual = oppositeReference
-        ? oppositeOption.mid - oppositeReference.mid - oppositeSignedDelta * (latest.spot - oppositeReference.spot)
-        : rawResidual;
+      const attribution = greekPremiumAttribution(latest, option, reference, side);
       return {
         strike: row.strike,
         oiChange: option.oi - reference.oi,
-        residual: rawResidual - (rawResidual + oppositeResidual) / 2
+        residual: attribution.residual
       };
     }).filter(Boolean);
+  }
+
+  function greekPremiumAttribution(latest, currentOption, reference, side) {
+    const spotChange = latest.spot - reference.spot;
+    const signedDelta = side === "CE" ? reference.delta : -reference.delta;
+    const elapsedDays = Math.max(0, latest.time - reference.time) / (24 * 60 * 60 * 1000);
+    const ivChange = currentOption.iv - reference.iv;
+    const deltaTerm = signedDelta * spotChange;
+    const gammaTerm = 0.5 * reference.gamma * spotChange * spotChange;
+    const vegaTerm = reference.vega * ivChange;
+    const thetaTerm = -Math.abs(reference.theta) * elapsedDays;
+    const expectedChange = deltaTerm + gammaTerm + vegaTerm + thetaTerm;
+    const actualChange = currentOption.mid - reference.mid;
+    return {
+      actualChange,
+      expectedChange,
+      residual: actualChange - expectedChange,
+      deltaTerm,
+      gammaTerm,
+      vegaTerm,
+      thetaTerm
+    };
   }
 
   function openingOptionReference(snapshots, strike, side) {
@@ -1824,14 +2244,29 @@
       const row = snapshot.rows.find((item) => item.strike === strike);
       if (!row) return null;
       const option = side === "CE" ? row.ce : row.pe;
-      return { spot: snapshot.spot, oi: option.oi, mid: option.mid, delta: option.delta };
+      return {
+        time: snapshot.time,
+        spot: snapshot.spot,
+        oi: option.oi,
+        mid: option.mid,
+        delta: option.delta,
+        gamma: option.gamma,
+        theta: option.theta,
+        vega: option.vega,
+        iv: option.iv
+      };
     }).filter(Boolean);
     if (points.length < 3) return null;
     return {
+      time: median(points.map((item) => item.time)),
       spot: median(points.map((item) => item.spot)),
       oi: median(points.map((item) => item.oi)),
       mid: median(points.map((item) => item.mid)),
-      delta: median(points.map((item) => item.delta))
+      delta: median(points.map((item) => item.delta)),
+      gamma: median(points.map((item) => item.gamma)),
+      theta: median(points.map((item) => item.theta)),
+      vega: median(points.map((item) => item.vega)),
+      iv: median(points.map((item) => item.iv))
     };
   }
 
@@ -1840,7 +2275,17 @@
     const row = snapshot.rows.find((item) => item.strike === strike);
     if (!row) return null;
     const option = side === "CE" ? row.ce : row.pe;
-    return { spot: snapshot.spot, oi: option.oi, mid: option.mid, delta: option.delta };
+    return {
+      time: snapshot.time,
+      spot: snapshot.spot,
+      oi: option.oi,
+      mid: option.mid,
+      delta: option.delta,
+      gamma: option.gamma,
+      theta: option.theta,
+      vega: option.vega,
+      iv: option.iv
+    };
   }
 
   function readContractFlow(windows) {

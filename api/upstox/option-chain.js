@@ -2,9 +2,12 @@ const UPSTOX_OPTION_CHAIN_URL = "https://api.upstox.com/v2/option/chain";
 const UPSTOX_OPTION_CONTRACT_URL = "https://api.upstox.com/v2/option/contract";
 const UPSTOX_INTRADAY_CANDLE_URL = "https://api.upstox.com/v3/historical-candle/intraday";
 const UPSTOX_HISTORICAL_CANDLE_URL = "https://api.upstox.com/v3/historical-candle";
+const UPSTOX_INSTRUMENT_SEARCH_URL = "https://api.upstox.com/v2/instruments/search";
+const UPSTOX_FULL_QUOTE_URL = "https://api.upstox.com/v2/market-quote/quotes";
 const { saveMarketSnapshot } = require("../../lib/session-store");
 
 const previousCloseCache = new Map();
+const futureInstrumentCache = new Map();
 
 module.exports = async function handler(req, res) {
   setJsonHeaders(res);
@@ -44,10 +47,11 @@ async function fetchLivePayload(instrumentKey, requestedExpiry, token) {
   url.searchParams.set("instrument_key", instrumentKey);
   url.searchParams.set("expiry_date", expiryDate);
 
-  const [response, candles5m, previousClose] = await Promise.all([
+  const [response, candles5m, previousClose, future] = await Promise.all([
     fetch(url, { headers: upstoxHeaders(token) }),
     fetchIntradayCandles(instrumentKey, token).catch(() => []),
-    fetchPreviousSessionClose(instrumentKey, token).catch(() => 0)
+    fetchPreviousSessionClose(instrumentKey, token).catch(() => 0),
+    fetchIndexFutureQuote(instrumentKey, token).catch(() => null)
   ]);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -65,9 +69,64 @@ async function fetchLivePayload(instrumentKey, requestedExpiry, token) {
     expiry: expiryDate,
     availableExpiries: [],
     underlying,
+    future,
     candles5m,
     data: payload.data || []
   };
+}
+
+async function fetchIndexFutureQuote(instrumentKey, token) {
+  const contract = await resolveIndexFuture(instrumentKey, token);
+  if (!contract) return null;
+  const url = new URL(UPSTOX_FULL_QUOTE_URL);
+  url.searchParams.set("instrument_key", contract.instrument_key);
+  const response = await fetch(url, { headers: upstoxHeaders(token) });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || payload.error || "Unable to fetch index future quote");
+  const quote = Object.values(payload.data || {})[0];
+  if (!quote) return null;
+  return {
+    instrumentKey: contract.instrument_key,
+    symbol: quote.symbol || contract.trading_symbol || contract.underlying_symbol || "Index future",
+    expiry: contract.expiry || "",
+    ltp: number(quote.last_price),
+    volume: number(quote.volume),
+    oi: number(quote.oi),
+    timestamp: quote.timestamp || null
+  };
+}
+
+async function resolveIndexFuture(instrumentKey, token) {
+  const cached = futureInstrumentCache.get(instrumentKey);
+  const today = new Date().toISOString().slice(0, 10);
+  if (cached && cached.expiry >= today) return cached;
+  const descriptor = indexFutureDescriptor(instrumentKey);
+  if (!descriptor) return null;
+  const url = new URL(UPSTOX_INSTRUMENT_SEARCH_URL);
+  url.searchParams.set("query", descriptor.query);
+  url.searchParams.set("exchanges", descriptor.exchange);
+  url.searchParams.set("segments", "FUT");
+  url.searchParams.set("expiry", "current_month");
+  url.searchParams.set("page_number", "1");
+  url.searchParams.set("records", "30");
+  const response = await fetch(url, { headers: upstoxHeaders(token) });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || payload.error || "Unable to resolve index future");
+  const contracts = (Array.isArray(payload.data) ? payload.data : [])
+    .filter((item) => item.instrument_type === "FUT" && item.expiry >= today)
+    .filter((item) => !item.underlying_key || item.underlying_key === instrumentKey)
+    .sort((a, b) => String(a.expiry).localeCompare(String(b.expiry)));
+  const contract = contracts[0] || null;
+  if (contract) futureInstrumentCache.set(instrumentKey, contract);
+  return contract;
+}
+
+function indexFutureDescriptor(instrumentKey) {
+  if (instrumentKey === "NSE_INDEX|Nifty 50") return { query: "NIFTY", exchange: "NSE" };
+  if (instrumentKey === "NSE_INDEX|Nifty Bank") return { query: "BANKNIFTY", exchange: "NSE" };
+  if (instrumentKey === "NSE_INDEX|Nifty Fin Service") return { query: "FINNIFTY", exchange: "NSE" };
+  if (instrumentKey === "BSE_INDEX|SENSEX") return { query: "SENSEX", exchange: "BSE" };
+  return null;
 }
 
 async function fetchPreviousSessionClose(instrumentKey, token) {
@@ -226,7 +285,31 @@ function makeDemoPayload(instrumentKey, expiryDate) {
       dayOpen: round(dayOpen),
       previousClose: round(base - 20)
     },
+    future: makeDemoFuture(instrumentKey, now, base),
     data: rows
+  };
+}
+
+function makeDemoFuture(instrumentKey, now, base) {
+  const parts = new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(new Date(now)).reduce((result, part) => {
+    result[part.type] = part.value;
+    return result;
+  }, {});
+  const seconds = Math.max(0, Number(parts.hour) * 3600 + Number(parts.minute) * 60 + Number(parts.second) - (9 * 3600 + 15 * 60));
+  return {
+    instrumentKey: `DEMO_FUT|${instrumentKey}`,
+    symbol: `${instrumentKey.includes("Bank") ? "BANKNIFTY" : instrumentKey.includes("Fin") ? "FINNIFTY" : instrumentKey.includes("SENSEX") ? "SENSEX" : "NIFTY"} FUT`,
+    expiry: demoExpiries().slice(-1)[0],
+    ltp: round(base + Math.sin(now / 85000) * 48),
+    volume: Math.round(120000 + seconds * 42),
+    oi: Math.round(8500000 + Math.sin(now / 180000) * 180000),
+    timestamp: new Date(now).toISOString()
   };
 }
 

@@ -74,6 +74,11 @@
             <div class="structure-location" id="structureLocation">
               <span>Spot --</span><span>Support --</span><span>Resistance --</span><span>Range --</span>
             </div>
+            <div class="structure-qualification" id="structureQualification" aria-label="Qualified support pressure and resistance">
+              <div><span>Support</span><strong>Building</strong><em>Exact OI history needed</em></div>
+              <div><span>Current pressure</span><strong>Unproven</strong><em>Waiting for aligned flow</em></div>
+              <div><span>Resistance</span><strong>Building</strong><em>Exact OI history needed</em></div>
+            </div>
             <section class="pressure-read" aria-label="Pressure response intelligence">
               <div class="pressure-read-heading">
                 <div>
@@ -90,12 +95,41 @@
               </div>
               <p class="pressure-narrative" id="pressureNarrative">The inferred move driver will appear only after material OI and premium residual agree.</p>
             </section>
+            <div class="structure-analytics" id="structureAnalytics" aria-label="Premium response and market participation"></div>
             <div class="structure-table" id="structureTable"></div>
             <div class="structure-evidence" id="structureEvidence"></div>
             <div class="structure-footer">
               <strong id="structureDecision">DATA BUILDING</strong>
               <span id="structureLevels">Trigger building · invalidation building</span>
               <span id="structureStability">Completed 5m confirmation pending</span>
+            </div>
+          </article>
+
+          <article class="panel span-2 resistance-memory-card" id="resistanceMemoryCard" data-tone="building">
+            <div class="resistance-memory-heading">
+              <div>
+                <p class="eyebrow">Five-Session Resistance Memory</p>
+                <h2 id="resistanceMemoryHeadline">Loading actual five-session ceiling evidence</h2>
+                <p id="resistanceMemoryMeta">No previous-session OI is added across expiries.</p>
+              </div>
+              <span class="resistance-memory-state building" id="resistanceMemoryState">BUILDING</span>
+            </div>
+            <div class="resistance-memory-strip" id="resistanceMemoryStrip">
+              <span>Level <strong>--</strong></span>
+              <span>Tests <strong>--</strong></span>
+              <span>Accepted breaks <strong>--</strong></span>
+              <span>Distance <strong>--</strong></span>
+            </div>
+            <div class="resistance-memory-grid" id="resistanceMemoryGrid">
+              <section><span>Historical ceiling</span><strong>DB history building</strong><em>Five completed sessions required</em></section>
+              <section><span>Current CE inventory</span><strong>Exact baseline building</strong><em>Open and rolling windows will appear</em></section>
+              <section><span>Defence effectiveness</span><strong>Unproven</strong><em>Writing must produce a spot rejection</em></section>
+            </div>
+            <div class="resistance-memory-timeline" id="resistanceMemoryTimeline"></div>
+            <div class="resistance-memory-footer">
+              <strong id="resistanceMemoryVerdict">WAIT FOR HISTORICAL MEMORY</strong>
+              <span id="resistanceMemoryMeaning">A high CE OI value alone is not treated as resistance.</span>
+              <span id="resistanceMemoryInvalidation">Accepted break = two consecutive completed 5m closes above the level.</span>
             </div>
           </article>
 
@@ -114,6 +148,7 @@
                     <th>1m</th>
                     <th>3m</th>
                     <th>5m</th>
+                    <th>10m</th>
                     <th>15m</th>
                     <th>30m</th>
                     <th>Open</th>
@@ -184,6 +219,7 @@
                 <code>immediate support/resistance = highest actual PE/CE OI on the correct side of spot inside the nearest 3 strikes</code>
                 <code>completed 5m windows provide stability; no distance weight or blended score is used</code>
                 <code>absolute maximum PE/CE OI remains visible separately as the major wall, not the immediate trading level</code>
+                <code>qualified = stable wall + fresh writing-like defence + spot on defended side + actual 5m spot reaction; UI shows passed evidence gates, not probability</code>
               </div>
               <div>
                 <strong>Confirmed Range</strong>
@@ -192,14 +228,22 @@
               </div>
               <div>
                 <strong>Actual Changes</strong>
-                <code>5m/15m/30m = current value minus exact historical snapshot</code>
+                <code>5m/10m/15m/30m = current value minus exact historical snapshot</code>
                 <code>missing history always displays Building; values are never estimated</code>
               </div>
               <div>
                 <strong>Premium Confirmation</strong>
                 <code>mid = valid bid/ask midpoint, otherwise LTP fallback</code>
-                <code>side residual removes starting-delta move and common CE/PE volatility effect</code>
-                <code>material OI + material residual classifies writing, buildup, covering, or unwind</code>
+                <code>Greek expected change = delta move + gamma curvature + vega/IV change + elapsed theta</code>
+                <code>material OI + Greek-adjusted residual infers writing-like, buildup-like, covering-like, or unwind-like behaviour</code>
+                <code>participation = actual ATM ±3 option-volume delta; nearest monthly index-future volume is secondary confirmation only</code>
+              </div>
+              <div>
+                <strong>Five-Session Resistance</strong>
+                <code>historical ceiling = an option strike above spot tested in the last 5 completed sessions with zero accepted-break sessions</code>
+                <code>accepted break = 2 consecutive completed 5m closes above the exact strike; one close is only a break candidate</code>
+                <code>reinforced = persistent CE writing-like flow plus actual downside spot response; no response is writing absorbed</code>
+                <code>same-expiry previous-close OI is displayed separately; different-expiry OI is never added</code>
               </div>
               <div>
                 <strong>Tomorrow Playbook</strong>

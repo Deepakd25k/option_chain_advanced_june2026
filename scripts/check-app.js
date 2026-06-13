@@ -8,9 +8,11 @@ const requiredFiles = [
   "api/upstox/option-chain.js",
   "api/session/history.js",
   "api/session/playbook.js",
+  "api/session/resistance-memory.js",
   "api/cron/capture.js",
   "lib/session-store.js",
   "lib/session-playbook.js",
+  "lib/resistance-memory.js",
   "db/schema.sql",
   "scripts/dev-server.js",
   "vercel.json",
@@ -32,6 +34,12 @@ for (const id of [
   "pressureVerdict",
   "pressureMetrics",
   "pressureNarrative",
+  "structureQualification",
+  "structureAnalytics",
+  "resistanceMemoryCard",
+  "resistanceMemoryHeadline",
+  "resistanceMemoryGrid",
+  "resistanceMemoryVerdict",
   "structureTable",
   "structureEvidence",
   "matrixTable",
@@ -84,7 +92,12 @@ const calibrationGuards = [
   "detectInventoryRoleFlip(latest",
   "pressurePathLoad(latest",
   "PRESSURE ABSORBED",
-  "NO CAUSAL EDGE",
+  "NO OI-SUPPORTED EDGE",
+  "OI-SUPPORTED RELEASE",
+  "Greek-adjusted premium residual",
+  "greekPremiumAttribution(latest",
+  "buildParticipationRead(lastSnapshot())",
+  "Writing-like",
   "DB ready · market closed",
   "DB ready · no data today",
   "Database history request timed out",
@@ -108,7 +121,11 @@ const calibrationGuards = [
   "UPSIDE",
   "ABSORBED",
   "wallInventoryMeaning",
-  "UNVERIFIED GAP"
+  "UNVERIFIED GAP",
+  "loadResistanceMemory()",
+  "WRITING ABSORBED",
+  "ACCEPTED BREAKOUT",
+  "two consecutive completed 5m closes"
 ];
 
 for (const guard of calibrationGuards) {
@@ -131,6 +148,111 @@ for (const guard of [
     console.error(`Missing session range-history guard: ${guard}`);
     process.exit(1);
   }
+}
+
+const upstoxApi = fs.readFileSync(path.resolve(__dirname, "..", "api/upstox/option-chain.js"), "utf8");
+for (const guard of [
+  "UPSTOX_INSTRUMENT_SEARCH_URL",
+  "UPSTOX_FULL_QUOTE_URL",
+  "fetchIndexFutureQuote(instrumentKey",
+  'url.searchParams.set("segments", "FUT")',
+  "futureInstrumentCache"
+]) {
+  if (!upstoxApi.includes(guard)) {
+    console.error(`Missing futures participation guard: ${guard}`);
+    process.exit(1);
+  }
+}
+
+for (const guard of [
+  "loadRecentCompletedSessions",
+  "loadLatestExpiryClose",
+  "selected_sessions",
+  "ROW_NUMBER() OVER"
+]) {
+  if (!sessionStore.includes(guard)) {
+    console.error(`Missing resistance memory DB guard: ${guard}`);
+    process.exit(1);
+  }
+}
+
+const resistanceApi = fs.readFileSync(path.resolve(__dirname, "..", "api/session/resistance-memory.js"), "utf8");
+for (const guard of [
+  "buildResistanceMemory",
+  "loadRecentCompletedSessions(instrumentKey, 5)",
+  "loadLatestExpiryClose(instrumentKey, expiryDate)"
+]) {
+  if (!resistanceApi.includes(guard)) {
+    console.error(`Missing resistance memory API guard: ${guard}`);
+    process.exit(1);
+  }
+}
+
+const { analyzeSessionLevel, buildResistanceMemory } = require(path.resolve(__dirname, "..", "lib/resistance-memory.js"));
+
+function resistancePayload(date, expiry, spot) {
+  return {
+    generatedAt: `${date}T09:55:00.000Z`,
+    expiry,
+    underlying: { spot },
+    data: [23450, 23500, 23550].map((strike) => ({
+      strike_price: strike,
+      underlying_spot_price: spot,
+      call_options: { market_data: { oi: 1000000 + strike * 10, bid_price: 99, ask_price: 101 } },
+      put_options: { market_data: { oi: 1000000, bid_price: 99, ask_price: 101 } }
+    }))
+  };
+}
+
+function resistanceSession(date, expiry, closes) {
+  const candles5m = closes.map((close, index) => ({
+    start: `${date}T0${4 + Math.floor(index / 12)}:${String((index % 12) * 5).padStart(2, "0")}:00.000Z`,
+    open: index ? closes[index - 1] : close - 5,
+    high: Math.max(close, 23502),
+    low: Math.min(close - 8, 23455),
+    close
+  }));
+  return {
+    sessionDate: date,
+    expiryDate: expiry,
+    snapshots: [resistancePayload(date, expiry, closes[closes.length - 1])],
+    candles5m
+  };
+}
+
+const resistanceSessions = [
+  resistanceSession("2026-06-11", "2026-06-16", [23470, 23492, 23480]),
+  resistanceSession("2026-06-10", "2026-06-16", [23472, 23495, 23476]),
+  resistanceSession("2026-06-09", "2026-06-09", [23465, 23490, 23474]),
+  resistanceSession("2026-06-08", "2026-06-09", [23460, 23488, 23468]),
+  resistanceSession("2026-06-05", "2026-06-09", [23458, 23486, 23466])
+];
+const resistanceMemory = buildResistanceMemory(resistanceSessions, {
+  spot: 23460,
+  currentExpiry: "2026-06-16",
+  sameExpiryClose: {
+    sessionDate: "2026-06-11",
+    expiryDate: "2026-06-16",
+    payload: resistancePayload("2026-06-11", "2026-06-16", 23480)
+  }
+});
+if (!resistanceMemory || resistanceMemory.level !== 23500 || resistanceMemory.acceptedBreakSessions !== 0 || resistanceMemory.expiryContinuity !== "same-expiry") {
+  console.error("Five-session resistance memory regression failed");
+  process.exit(1);
+}
+
+const accepted = analyzeSessionLevel({
+  sessionDate: "2026-06-12",
+  expiryDate: "2026-06-16",
+  candles: [
+    { start: 1, open: 23490, high: 23510, low: 23480, close: 23504 },
+    { start: 2, open: 23504, high: 23520, low: 23500, close: 23512 }
+  ],
+  closeSpot: 23512
+}, 23500, 50);
+if (!accepted.acceptedBreak) {
+  console.error("Resistance acceptance must require and detect two consecutive closes above the level");
+  process.exit(1);
 }
 
 const sessionPlaybook = fs.readFileSync(path.resolve(__dirname, "..", "lib/session-playbook.js"), "utf8");
