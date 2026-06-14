@@ -545,6 +545,66 @@ input {
   color: #ffb1c2;
 }
 
+.fifteen-outlook {
+  background: #11151b;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--soft);
+  border-radius: var(--radius);
+  display: grid;
+  grid-template-columns: 1.35fr repeat(3, minmax(0, 0.75fr));
+  margin-top: 16px;
+  overflow: hidden;
+}
+
+.fifteen-outlook[data-tone="positive"] { border-left-color: var(--green); }
+.fifteen-outlook[data-tone="negative"] { border-left-color: var(--rose); }
+.fifteen-outlook[data-tone="warn"] { border-left-color: var(--amber); }
+.fifteen-outlook[data-tone="neutral"] { border-left-color: var(--violet); }
+
+.outlook-verdict,
+.outlook-cell {
+  border-right: 1px solid var(--line);
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 11px 13px;
+}
+
+.outlook-cell:nth-child(4) { border-right: 0; }
+.outlook-verdict span,
+.outlook-cell span {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+.outlook-verdict strong { font-size: 1.05rem; }
+.fifteen-outlook[data-tone="positive"] .outlook-verdict strong { color: #80e7d0; }
+.fifteen-outlook[data-tone="negative"] .outlook-verdict strong { color: #ff9bb2; }
+.fifteen-outlook[data-tone="warn"] .outlook-verdict strong { color: #ffd892; }
+.outlook-cell strong { font-size: 0.9rem; }
+.outlook-verdict em,
+.outlook-cell em { color: var(--muted); font-size: 0.69rem; font-style: normal; line-height: 1.35; }
+
+.outlook-gates {
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.outlook-gates span {
+  border-right: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 7px 13px;
+}
+.outlook-gates span:last-child { border-right: 0; }
+.outlook-gates .pass { color: #80e7d0; }
+.outlook-gates .fail { color: #7c8492; }
+.outlook-gates b { float: right; }
+
 .structure-location {
   background: var(--surface-2);
   border: 1px solid var(--line);
@@ -1910,6 +1970,15 @@ td {
   .structure-location {
     grid-template-columns: 1fr 1fr;
   }
+
+  .fifteen-outlook { grid-template-columns: 1fr 1fr; }
+  .outlook-verdict,
+  .outlook-cell { border-bottom: 1px solid var(--line); }
+  .outlook-cell:nth-child(2) { border-right: 0; }
+  .outlook-cell:nth-child(4) { border-bottom: 0; }
+  .outlook-gates { grid-template-columns: 1fr 1fr; }
+  .outlook-gates span:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
+  .outlook-gates span:nth-child(even) { border-right: 0; }
 
   .structure-location span {
     border-bottom: 1px solid var(--line);

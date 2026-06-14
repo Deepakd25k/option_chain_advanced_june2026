@@ -71,6 +71,31 @@
               </div>
               <span class="structure-state building" id="structureState">BUILDING</span>
             </div>
+            <section class="fifteen-outlook" id="fifteenOutlook" data-tone="building" aria-label="Next 15 minute option-chain outlook">
+              <div class="outlook-verdict">
+                <span>Next 15m Outlook</span>
+                <strong id="outlookState">UNPROVEN</strong>
+                <em id="outlookStage">Exact completed-5m evidence building</em>
+              </div>
+              <div class="outlook-cell">
+                <span>Agreement</span>
+                <strong id="outlookAgreement">0 / 4</strong>
+                <em id="outlookAgreementRead">No weighted score</em>
+              </div>
+              <div class="outlook-cell">
+                <span>Next Test</span>
+                <strong id="outlookTarget">--</strong>
+                <em id="outlookTargetRead">Path unresolved</em>
+              </div>
+              <div class="outlook-cell">
+                <span>Invalidation</span>
+                <strong id="outlookInvalidation">--</strong>
+                <em id="outlookInvalidationRead">Wait for qualified direction</em>
+              </div>
+              <div class="outlook-gates" id="outlookGates">
+                <span>OI flow</span><span>Premium</span><span>Response</span><span>Path</span>
+              </div>
+            </section>
             <div class="structure-location" id="structureLocation">
               <span>Spot --</span><span>Support --</span><span>Resistance --</span><span>Range --</span>
             </div>
@@ -234,6 +259,12 @@
                 <code>OI confluence = expected boundary within half one actual strike-step of immediate PE support or CE resistance</code>
               </div>
               <div>
+                <strong>Next 15m Outlook</strong>
+                <code>evaluated from exact current-expiry history at completed 5m boundaries; it does not change on every tick</code>
+                <code>direction requires at least 3 of 4 groups: ATM ±3 material inventory, ATM premium residual, actual spot release, and opposing-wall path clearance</code>
+                <code>4/4 = qualified, 3/4 = early, below 3/4 = unproven; range hold requires confirmed containment without directional majority</code>
+              </div>
+              <div>
                 <strong>Dynamic OI Walls</strong>
                 <code>immediate support/resistance = highest actual PE/CE OI on the correct side of spot inside the nearest 11 strikes</code>
                 <code>completed 5m windows provide stability; no distance weight or blended score is used</code>
@@ -319,6 +350,7 @@
     </aside>
 
     <script src="/lib/expected-move.js"></script>
+    <script src="/lib/fifteen-minute-outlook.js"></script>
     <script src="/src/app.js"></script>
   </body>
 </html>

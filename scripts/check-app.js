@@ -14,6 +14,7 @@ const requiredFiles = [
   "lib/session-playbook.js",
   "lib/resistance-memory.js",
   "lib/expected-move.js",
+  "lib/fifteen-minute-outlook.js",
   "db/schema.sql",
   "scripts/dev-server.js",
   "vercel.json",
@@ -39,6 +40,10 @@ for (const id of [
   "expectedMoveShell",
   "expectedMoveLower",
   "expectedMoveUpper",
+  "fifteenOutlook",
+  "outlookState",
+  "outlookAgreement",
+  "outlookGates",
   "structureAnalytics",
   "resistanceMemoryCard",
   "resistanceMemoryHeadline",
@@ -71,6 +76,10 @@ if (html.includes("ATM Flow Matrix") || html.includes('id="atmFlowTable"')) {
 const app = fs.readFileSync(path.resolve(__dirname, "..", "src/app.js"), "utf8");
 if (!html.includes('<script src="/lib/expected-move.js"></script>')) {
   console.error("Expected-move formula library must load before the app");
+  process.exit(1);
+}
+if (!html.includes('<script src="/lib/fifteen-minute-outlook.js"></script>')) {
+  console.error("15m outlook classifier must load before the app");
   process.exit(1);
 }
 if (!html.includes("Current-Expiry Expected Move") || !html.includes("sqrt(1/365)")) {
@@ -110,6 +119,9 @@ const calibrationGuards = [
   "renderExpectedMove(lastSnapshot(), read)",
   "snapshot.expiry !== latest.expiry",
   "open × IV × √(1/365)",
+  "buildFifteenMinuteOutlook(latest, read)",
+  "completedFiveMinuteBucket(latest.time)",
+  "pathLoadRatio",
   "greekPremiumAttribution(latest",
   "buildParticipationRead(lastSnapshot())",
   "Writing-like",
@@ -175,6 +187,22 @@ const upperConfluence = expectedMove.classifyBoundary(20225, 20250, 50, "upper")
 const lowerInside = expectedMove.classifyBoundary(19800, 19850, 50, "lower");
 if (upperConfluence.state !== "confluence" || lowerInside.state !== "wall-inside") {
   console.error("Expected-move OI wall relationship regression failed");
+  process.exit(1);
+}
+
+const { classifyFifteenMinuteOutlook } = require(path.resolve(__dirname, "..", "lib/fifteen-minute-outlook.js"));
+const fourGates = ["flow", "premium", "response", "path"].map((key) => ({ key, label: key, pass: true }));
+const threeGates = fourGates.map((gate, index) => ({ ...gate, pass: index < 3 }));
+const qualifiedUp = classifyFifteenMinuteOutlook({ ready: true, upGates: fourGates, downGates: [], rangeLock: false });
+const earlyDown = classifyFifteenMinuteOutlook({ ready: true, upGates: [], downGates: threeGates, rangeLock: false });
+const rangeHold = classifyFifteenMinuteOutlook({
+  ready: true,
+  upGates: fourGates.map((gate) => ({ ...gate, pass: false })),
+  downGates: [],
+  rangeLock: true
+});
+if (qualifiedUp.state !== "UPSIDE TEST" || qualifiedUp.agreement !== 4 || earlyDown.state !== "DOWN BIAS BUILDING" || rangeHold.state !== "RANGE HOLD") {
+  console.error("15m outlook deterministic state regression failed");
   process.exit(1);
 }
 

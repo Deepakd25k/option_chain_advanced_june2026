@@ -45,6 +45,8 @@
     resistanceMemoryKey: null,
     resistanceMemoryLastChecked: 0,
     nearestExpiry: null,
+    fifteenOutlook: null,
+    outlookLastBucket: null,
     sessionPlaybook: null,
     playbookLastChecked: 0,
     eventTape: freshEventTapeState(),
@@ -85,6 +87,8 @@
       "activeWindow", "refreshInterval", "marketStructureCard", "structureHeadline", "structureOrigin",
       "structureState", "structureLocation", "structureQualification", "structureAnalytics", "structureTable", "structureEvidence", "structureDecision",
       "expectedMoveShell", "expectedMoveLower", "expectedMoveUpper", "expectedMoveLowerRead", "expectedMoveUpperRead", "expectedMoveMeta",
+      "fifteenOutlook", "outlookState", "outlookStage", "outlookAgreement", "outlookAgreementRead",
+      "outlookTarget", "outlookTargetRead", "outlookInvalidation", "outlookInvalidationRead", "outlookGates",
       "structureLevels", "structureStability", "pressureHeadline", "pressureVerdict", "pressureMetrics",
       "pressureNarrative", "matrixTable",
       "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable", "sessionMemoryCard",
@@ -152,6 +156,8 @@
     state.resistanceMemoryReason = "Loading five-session DB history";
     state.resistanceMemoryKey = null;
     state.resistanceMemoryLastChecked = 0;
+    state.fifteenOutlook = null;
+    state.outlookLastBucket = null;
     state.sessionPlaybook = null;
     state.playbookLastChecked = 0;
     state.eventTape = freshEventTapeState();
@@ -633,6 +639,7 @@
     }
     saveCalibrationState();
     renderMarketStructure(structureRead);
+    renderFifteenMinuteOutlook(latest, structureRead);
     renderResistanceMemory(latest);
     updateStructureEventTape(structureRead, latest);
     renderMatrix();
@@ -904,6 +911,173 @@
     return kind === "upper"
       ? `${level} CE wall is beyond the expected upper limit`
       : `${level} PE wall is beyond the expected lower limit`;
+  }
+
+  function currentExpectedMove(latest) {
+    const api = globalThis.ExpectedMove;
+    if (!api || !state.nearestExpiry || latest.expiry !== state.nearestExpiry) return null;
+    const opening = openingBaselineSnapshots(latest);
+    const openingIv = opening.map((snapshot) => snapshot.atmIv).filter((value) => value > 0);
+    if (opening.length < 3 || openingIv.length < 3) return null;
+    return api.calculateSessionExpectedMove(
+      median(opening.map((snapshot) => snapshot.spot)),
+      median(openingIv)
+    );
+  }
+
+  function renderFifteenMinuteOutlook(latest, read) {
+    const bucket = completedFiveMinuteBucket(latest.time);
+    if (!state.fifteenOutlook || state.outlookLastBucket !== bucket) {
+      state.fifteenOutlook = buildFifteenMinuteOutlook(latest, read);
+      state.outlookLastBucket = bucket;
+    }
+    const outlook = state.fifteenOutlook;
+    el.fifteenOutlook.dataset.tone = outlook.tone;
+    el.outlookState.textContent = outlook.state;
+    el.outlookStage.textContent = `${outlook.stage} · ${outlook.reason}`;
+    el.outlookAgreement.textContent = `${outlook.agreement} / ${outlook.total}`;
+    el.outlookAgreementRead.textContent = outlook.agreementRead;
+    el.outlookTarget.textContent = outlook.target ? price(outlook.target, 0) : outlook.rangeText || "--";
+    el.outlookTargetRead.textContent = outlook.targetRead;
+    el.outlookInvalidation.textContent = outlook.invalidation ? price(outlook.invalidation, 0) : "--";
+    el.outlookInvalidationRead.textContent = outlook.invalidationRead;
+    el.outlookGates.innerHTML = outlook.gates.map((gate) => `
+      <span class="${gate.pass ? "pass" : "fail"}" title="${escapeHtml(gate.detail)}">${escapeHtml(gate.label)} <b>${gate.pass ? "✓" : "×"}</b></span>
+    `).join("");
+  }
+
+  function buildFifteenMinuteOutlook(latest, read) {
+    const classifier = globalThis.FifteenMinuteOutlook;
+    const currentExpiry = Boolean(state.nearestExpiry && latest.expiry === state.nearestExpiry);
+    const exact15m = getOlderSnapshot(900);
+    const pressure = read.pressure && read.pressure.eventData;
+    const support = read.contracts.find((item) => item.strike === read.support && item.side === "PE");
+    const resistance = read.contracts.find((item) => item.strike === read.resistance && item.side === "CE");
+    const atmCe = read.contracts.find((item) => item.strike === latest.atmStrike && item.side === "CE");
+    const atmPe = read.contracts.find((item) => item.strike === latest.atmStrike && item.side === "PE");
+    const ceFive = atmCe && atmCe.windows["300"];
+    const peFive = atmPe && atmPe.windows["300"];
+    const resistanceFive = resistance && resistance.windows["300"];
+    const supportFive = support && support.windows["300"];
+    const upFlow = Boolean(pressure && pressure.direction === "up" && pressure.aligned >= 2 && !pressure.oppositeMove);
+    const downFlow = Boolean(pressure && pressure.direction === "down" && pressure.aligned >= 2 && !pressure.oppositeMove);
+    const upPremium = Boolean(ceFive && ceFive.available && ceFive.materialResidual && ceFive.residual > 0);
+    const downPremium = Boolean(peFive && peFive.available && peFive.materialResidual && peFive.residual > 0);
+    const upResponse = Boolean(pressure && pressure.direction === "up" && pressure.released);
+    const downResponse = Boolean(pressure && pressure.direction === "down" && pressure.released);
+    const upWallExit = wallWithdrawalGate(resistanceFive, "CE");
+    const downWallExit = wallWithdrawalGate(supportFive, "PE");
+    const upPath = upWallExit.pass || Boolean(pressure && pressure.direction === "up" && pressure.pathLoadRatio !== null && pressure.pathLoadRatio < 1);
+    const downPath = downWallExit.pass || Boolean(pressure && pressure.direction === "down" && pressure.pathLoadRatio !== null && pressure.pathLoadRatio < 1);
+    const upGates = [
+      outlookGate("OI flow", upFlow, pressure ? `${pressure.aligned}/${pressure.total} material contracts` : "No directional inventory breadth"),
+      outlookGate("Premium", upPremium, premiumGateText(ceFive, "CE")),
+      outlookGate("Response", upResponse, responseGateText(pressure, "up")),
+      outlookGate("Path", upPath, upWallExit.pass ? upWallExit.detail : pathGateText(pressure, "up"))
+    ];
+    const downGates = [
+      outlookGate("OI flow", downFlow, pressure ? `${pressure.aligned}/${pressure.total} material contracts` : "No directional inventory breadth"),
+      outlookGate("Premium", downPremium, premiumGateText(peFive, "PE")),
+      outlookGate("Response", downResponse, responseGateText(pressure, "down")),
+      outlookGate("Path", downPath, downWallExit.pass ? downWallExit.detail : pathGateText(pressure, "down"))
+    ];
+    const rangeLock = Boolean(read.microRange && read.decision.includes("RANGE")) || read.decision.includes("TWO-SIDED WRITING");
+    const ready = Boolean(classifier && currentExpiry && exact15m && openingBaselineSnapshots(latest).length >= 3);
+    const reason = !currentExpiry
+      ? "Nearest current expiry required"
+      : !exact15m
+        ? "Exact 15m DB history building"
+        : "Opening baseline building";
+    const classified = classifier.classifyFifteenMinuteOutlook({
+      ready,
+      reason,
+      upGates,
+      downGates,
+      rangeLock,
+      rangeText: read.microRange ? `${price(read.microRange.low, 0)}–${price(read.microRange.high, 0)} containment` : "Two-sided option writing",
+      upText: "Inventory, premium, response, and path checked without weights",
+      downText: "Inventory, premium, response, and path checked without weights",
+      mixedText: "No three-group directional majority"
+    });
+    const activeGates = classified.direction === "up" ? upGates : classified.direction === "down" ? downGates : selectStrongerGates(upGates, downGates);
+    const expected = currentExpectedMove(latest);
+    const target = outlookTarget(classified.direction, latest, read, expected);
+    const step = inferStrikeStep(latest.rows);
+    const invalidation = classified.direction === "up"
+      ? read.invalidation || (read.support ? read.support - step / 2 : 0)
+      : classified.direction === "down"
+        ? read.invalidation || (read.resistance ? read.resistance + step / 2 : 0)
+        : 0;
+    return {
+      ...classified,
+      gates: activeGates,
+      agreementRead: classified.direction === "range" ? "Two-sided containment" : `${classified.stage} · no weighted score`,
+      target,
+      rangeText: classified.direction === "range" && read.microRange ? `${price(read.microRange.low, 0)}–${price(read.microRange.high, 0)}` : "",
+      targetRead: outlookTargetRead(classified.direction, target, latest, read, expected),
+      invalidation,
+      invalidationRead: classified.direction === "up" || classified.direction === "down"
+        ? "Direction fails beyond this structure level"
+        : "No directional invalidation until 3/4 agreement"
+    };
+  }
+
+  function completedFiveMinuteBucket(time) {
+    return Math.floor(time / (5 * 60 * 1000)) - 1;
+  }
+
+  function outlookGate(label, pass, detail) {
+    return { key: label.toLowerCase().replace(/\s+/g, "-"), label, pass, detail };
+  }
+
+  function wallWithdrawalGate(windowRead, side) {
+    if (!windowRead || !windowRead.available) return { pass: false, detail: `${side} wall history building` };
+    const inventory = inventoryWindowRead(windowRead, side);
+    const pass = windowRead.materialOi && windowRead.oiChange < 0 && inventory.clean
+      && (inventory.type === "covering" || inventory.type === "long-unwind");
+    return { pass, detail: `${side} wall ${inventory.clean ? inventory.shortLabel : "mixed"} · OI ${compact(windowRead.oiChange)}` };
+  }
+
+  function premiumGateText(windowRead, side) {
+    if (!windowRead || !windowRead.available) return `${side} 5m premium history building`;
+    return `${side} adjusted residual ${signed(windowRead.residual)}${windowRead.materialResidual ? " material" : " not material"}`;
+  }
+
+  function responseGateText(pressure, direction) {
+    if (!pressure || pressure.direction !== direction) return "Spot release not aligned";
+    return `${signed(pressure.spotMove)} pts · ${pressure.responseRatio === null ? "normal building" : `${Math.abs(pressure.responseRatio).toFixed(2)}× session-normal`}`;
+  }
+
+  function pathGateText(pressure, direction) {
+    if (!pressure || pressure.direction !== direction || pressure.pathLoadRatio === null) return "Opposing path unresolved";
+    return `${pressure.pathLoadRatio.toFixed(2)}× local OI toward ${pressure.pathBlocker ? price(pressure.pathBlocker, 0) : "next wall"}`;
+  }
+
+  function selectStrongerGates(up, down) {
+    return up.filter((gate) => gate.pass).length >= down.filter((gate) => gate.pass).length ? up : down;
+  }
+
+  function outlookTarget(direction, latest, read, expected) {
+    if (direction === "up") {
+      const candidates = [read.resistance, expected && expected.upper].filter((value) => value > latest.spot);
+      return candidates.length ? Math.min(...candidates) : 0;
+    }
+    if (direction === "down") {
+      const candidates = [read.support, expected && expected.lower].filter((value) => value > 0 && value < latest.spot);
+      return candidates.length ? Math.max(...candidates) : 0;
+    }
+    return 0;
+  }
+
+  function outlookTargetRead(direction, target, latest, read, expected) {
+    if (!direction || direction === "range") return read.microRange ? "Confirmed 5m range boundaries" : "Path unresolved";
+    if (!target) return "No valid wall or expected boundary ahead";
+    const expectedLevel = direction === "up" ? expected && expected.upper : expected && expected.lower;
+    const wall = direction === "up" ? read.resistance : read.support;
+    if (expectedLevel && wall && Math.abs(expectedLevel - wall) <= inferStrikeStep(latest.rows) / 2) {
+      return `${direction === "up" ? "CE ceiling" : "PE floor"} + expected-limit confluence`;
+    }
+    return target === wall ? `Immediate ${direction === "up" ? "CE resistance" : "PE support"} test` : "Expected-move boundary test";
   }
 
   function renderResistanceMemory(latest) {
@@ -1901,7 +2075,9 @@
         drivers,
         verdict,
         oppositeMove,
-        released
+        released,
+        pathLoadRatio: path.loadRatio,
+        pathBlocker: path.blocker
       }
     };
   }
@@ -1983,7 +2159,7 @@
   }
 
   function pressurePathLoad(latest, direction, step) {
-    if (!direction) return { value: "Direction unresolved", tone: "neutral" };
+    if (!direction) return { value: "Direction unresolved", tone: "neutral", loadRatio: null, blocker: null };
     const side = direction === "up" ? "CE" : "PE";
     const ordered = latest.rows.filter((row) => (
       direction === "up"
@@ -1991,7 +2167,7 @@
         : row.strike < latest.spot && latest.spot - row.strike <= step * WALL_SCAN_STRIKES
     )).sort((a, b) => direction === "up" ? a.strike - b.strike : b.strike - a.strike);
     const target = ordered.slice(0, 3);
-    if (!target.length) return { value: "Target strikes unavailable", tone: "neutral" };
+    if (!target.length) return { value: "Target strikes unavailable", tone: "neutral", loadRatio: null, blocker: null };
     const oi = (row) => side === "CE" ? row.ce.oi : row.pe.oi;
     const localMedian = median(ordered.map(oi).filter((value) => value > 0));
     const targetAverage = sum(target, oi) / target.length;
@@ -1999,7 +2175,9 @@
     const blocker = [...target].sort((a, b) => oi(b) - oi(a))[0];
     return {
       value: `${loadRatio.toFixed(2)}× local OI · ${price(blocker.strike, 0)} blocker`,
-      tone: loadRatio < 1 ? "positive" : loadRatio > 1 ? "warn" : "neutral"
+      tone: loadRatio < 1 ? "positive" : loadRatio > 1 ? "warn" : "neutral",
+      loadRatio,
+      blocker: blocker.strike
     };
   }
 

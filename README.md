@@ -14,6 +14,7 @@ Formula-backed intraday option-chain dashboard for Indian index option buyers. I
 - Five-Session Resistance Memory reconstructs an unaccepted option-strike ceiling from the previous five completed DB sessions, then separates CE writing effectiveness, absorption, rejected breaks, one-close break candidates, and two-close accepted breakouts.
 - Auto expiry fetch from Upstox option contracts; nearest expiry is selected automatically.
 - Current-expiry one-session expected range shows only two stable levels: lower and upper. It uses the 09:15-09:20 session-open and ATM-IV medians with `open x IV x sqrt(1/365)`; a later IV spike cannot repaint the opening range.
+- Next 15m Outlook compresses the live read into `UPSIDE TEST`, `DOWNSIDE TEST`, `RANGE HOLD`, or `UNPROVEN`. It updates at completed 5m boundaries and reports 3/4 early or 4/4 qualified agreement without a fabricated confidence percentage.
 - Index selector includes NIFTY50, BANKNIFTY, FINNIFTY, and SENSEX.
 - Timeframe matrix: 1m, 3m, 5m, 10m, 15m, 30m, and since-open comparison.
 - Calibration Lab: browser-local session recorder, 3m/5m/10m outcome tracking, and threshold suggestions.
@@ -119,6 +120,16 @@ The expected lower and upper levels are direction-neutral one-standard-deviation
 - lower limit within half one strike-step of immediate PE support is labelled a confluence; a breakdown still requires PE withdrawal and two completed 5m closes below
 - a wall inside the expected range can be tested before the statistical boundary; a wall beyond the range is less likely to be reached under the opening-IV estimate, but remains possible
 - the formula describes magnitude, never direction, certainty, or maximum possible movement
+
+### Next 15m Outlook
+
+The outlook is a deterministic evidence state, not a promised forecast. It is held stable between completed five-minute boundaries and is available only when the nearest current expiry, opening baseline, and exact 15-minute DB history are present.
+
+- OI flow: at least two material ATM ±3 contracts point in the same direction after Greek-adjusted premium attribution
+- premium: directional ATM CE or PE residual is positive and material versus the ATM ±11 cross-section
+- response: spot has released in the same direction by at least the session-median absolute 5m move
+- path: the opposing wall is withdrawing through covering/long-exit-like flow, or the next three strikes carry below-local-median OI load
+- 4/4 is `QUALIFIED`, 3/4 is `EARLY`, and anything split or below 3/4 remains `UNPROVEN`; no weights or probability claim are used
 
 ### Floating Structure Event Center
 
