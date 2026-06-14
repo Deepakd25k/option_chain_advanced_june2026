@@ -74,6 +74,19 @@
             <div class="structure-location" id="structureLocation">
               <span>Spot --</span><span>Support --</span><span>Resistance --</span><span>Range --</span>
             </div>
+            <div class="expected-move-shell" id="expectedMoveShell" data-tone="building">
+              <div class="expected-move-level lower">
+                <span>Expected Lower</span>
+                <strong id="expectedMoveLower">--</strong>
+                <em id="expectedMoveLowerRead">Current-expiry opening baseline building</em>
+              </div>
+              <div class="expected-move-level upper">
+                <span>Expected Upper</span>
+                <strong id="expectedMoveUpper">--</strong>
+                <em id="expectedMoveUpperRead">Current-expiry opening baseline building</em>
+              </div>
+              <p id="expectedMoveMeta">One-session IV range · direction-neutral · current expiry only</p>
+            </div>
             <div class="structure-qualification" id="structureQualification" aria-label="Qualified support pressure and resistance">
               <div><span>Support</span><strong>Building</strong><em>Exact OI history needed</em></div>
               <div><span>Current pressure</span><strong>Unproven</strong><em>Waiting for aligned flow</em></div>
@@ -215,8 +228,14 @@
                 <code>all later Open changes are current minus that median</code>
               </div>
               <div>
+                <strong>Current-Expiry Expected Move</strong>
+                <code>distance = 09:15-09:20 median spot × median ATM IV / 100 × sqrt(1/365)</code>
+                <code>lower/upper = opening anchor minus/plus distance; only the nearest current expiry is eligible</code>
+                <code>OI confluence = expected boundary within half one actual strike-step of immediate PE support or CE resistance</code>
+              </div>
+              <div>
                 <strong>Dynamic OI Walls</strong>
-                <code>immediate support/resistance = highest actual PE/CE OI on the correct side of spot inside the nearest 3 strikes</code>
+                <code>immediate support/resistance = highest actual PE/CE OI on the correct side of spot inside the nearest 11 strikes</code>
                 <code>completed 5m windows provide stability; no distance weight or blended score is used</code>
                 <code>absolute maximum PE/CE OI remains visible separately as the major wall, not the immediate trading level</code>
                 <code>qualified = stable wall + fresh writing-like defence + spot on defended side + actual 5m spot reaction; UI shows passed evidence gates, not probability</code>
@@ -299,6 +318,7 @@
       <div class="event-tape" id="eventTape"></div>
     </aside>
 
+    <script src="/lib/expected-move.js"></script>
     <script src="/src/app.js"></script>
   </body>
 </html>

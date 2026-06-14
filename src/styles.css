@@ -565,6 +565,43 @@ input {
 .structure-location span:last-child { border-right: 0; }
 .structure-location strong { color: var(--text); margin-left: 4px; }
 
+.expected-move-shell {
+  background: #11151b;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.expected-move-shell[data-tone="confluence"] {
+  border-color: rgba(232, 182, 91, 0.55);
+}
+
+.expected-move-level {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 11px 13px;
+}
+
+.expected-move-level:first-child { border-right: 1px solid var(--line); }
+.expected-move-level span { color: var(--muted); font-size: 0.69rem; font-weight: 850; text-transform: uppercase; }
+.expected-move-level strong { font-size: 1.05rem; }
+.expected-move-level em { color: var(--muted); font-size: 0.7rem; font-style: normal; line-height: 1.4; }
+.expected-move-level.lower strong { color: #80e7d0; }
+.expected-move-level.upper strong { color: #ff9bb2; }
+
+.expected-move-shell p {
+  border-top: 1px solid var(--line);
+  color: var(--soft);
+  font-size: 0.68rem;
+  font-weight: 700;
+  grid-column: 1 / -1;
+  padding: 8px 13px;
+}
+
 .structure-qualification,
 .structure-analytics {
   background: #11151b;
@@ -1885,6 +1922,12 @@ td {
   .structure-location span:last-child {
     border-bottom: 0;
     grid-column: 1 / -1;
+  }
+
+  .expected-move-shell { grid-template-columns: 1fr; }
+  .expected-move-level:first-child {
+    border-bottom: 1px solid var(--line);
+    border-right: 0;
   }
 
   .pressure-read-heading {

@@ -13,6 +13,7 @@ Formula-backed intraday option-chain dashboard for Indian index option buyers. I
 - Participation uses actual ATM ±3 option-volume deltas. The nearest monthly index-future volume is fetched automatically and shown only as secondary confirmation; index volume is never used.
 - Five-Session Resistance Memory reconstructs an unaccepted option-strike ceiling from the previous five completed DB sessions, then separates CE writing effectiveness, absorption, rejected breaks, one-close break candidates, and two-close accepted breakouts.
 - Auto expiry fetch from Upstox option contracts; nearest expiry is selected automatically.
+- Current-expiry one-session expected range shows only two stable levels: lower and upper. It uses the 09:15-09:20 session-open and ATM-IV medians with `open x IV x sqrt(1/365)`; a later IV spike cannot repaint the opening range.
 - Index selector includes NIFTY50, BANKNIFTY, FINNIFTY, and SENSEX.
 - Timeframe matrix: 1m, 3m, 5m, 10m, 15m, 30m, and since-open comparison.
 - Calibration Lab: browser-local session recorder, 3m/5m/10m outcome tracking, and threshold suggestions.
@@ -109,6 +110,15 @@ The dedicated resistance card uses actual completed five-minute DB candles and c
 - one close above is only `BREAK CANDIDATE`; a return below with renewed writing-like flow becomes `BREAKOUT REJECTED`
 
 The card reports observed states and invalidation. It does not claim that an unbroken historical ceiling cannot break in the future.
+
+### Current-Expiry Expected Range
+
+The expected lower and upper levels are direction-neutral one-standard-deviation references, not targets or support/resistance by themselves. They appear only for the nearest current expiry and require at least three exact current-session snapshots between 09:15 and 09:20 IST.
+
+- upper limit within half one strike-step of immediate CE resistance is labelled a confluence; a breakout still requires CE withdrawal and two completed 5m closes above
+- lower limit within half one strike-step of immediate PE support is labelled a confluence; a breakdown still requires PE withdrawal and two completed 5m closes below
+- a wall inside the expected range can be tested before the statistical boundary; a wall beyond the range is less likely to be reached under the opening-IV estimate, but remains possible
+- the formula describes magnitude, never direction, certainty, or maximum possible movement
 
 ### Floating Structure Event Center
 

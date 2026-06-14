@@ -44,6 +44,7 @@
     resistanceMemoryReason: "Loading five-session DB history",
     resistanceMemoryKey: null,
     resistanceMemoryLastChecked: 0,
+    nearestExpiry: null,
     sessionPlaybook: null,
     playbookLastChecked: 0,
     eventTape: freshEventTapeState(),
@@ -83,6 +84,7 @@
       "sourceLine", "recorderStatus", "refreshButton", "pauseButton", "symbolSelect", "expiryInput",
       "activeWindow", "refreshInterval", "marketStructureCard", "structureHeadline", "structureOrigin",
       "structureState", "structureLocation", "structureQualification", "structureAnalytics", "structureTable", "structureEvidence", "structureDecision",
+      "expectedMoveShell", "expectedMoveLower", "expectedMoveUpper", "expectedMoveLowerRead", "expectedMoveUpperRead", "expectedMoveMeta",
       "structureLevels", "structureStability", "pressureHeadline", "pressureVerdict", "pressureMetrics",
       "pressureNarrative", "matrixTable",
       "exportCalibration", "clearCalibration", "calibrationGrid", "outcomeTable", "sessionMemoryCard",
@@ -440,6 +442,7 @@
         throw new Error("No expiries returned");
       }
       const preferred = el.expiryInput.dataset.preferred || localStorage.getItem("expiry_date") || "auto";
+      state.nearestExpiry = expiries[0];
       const selected = expiries.includes(preferred) ? preferred : expiries[0];
       el.expiryInput.innerHTML = expiries.map((expiry, index) => (
         `<option value="${expiry}">${expiry}${index === 0 ? " · nearest" : ""}</option>`
@@ -448,6 +451,7 @@
       localStorage.setItem("expiry_date", selected);
       setSource(`${payload.source === "live" ? "Live" : "Demo"} expiries loaded · ${selected}`);
     } catch (error) {
+      state.nearestExpiry = null;
       el.expiryInput.innerHTML = '<option value="auto">Auto</option>';
       el.expiryInput.value = "auto";
       localStorage.setItem("expiry_date", "auto");
@@ -818,6 +822,7 @@
       `<span>Major OI Walls <strong>PE ${read.majorSupportWall ? price(read.majorSupportWall.strike, 0) : "--"} · CE ${read.majorResistanceWall ? price(read.majorResistanceWall.strike, 0) : "--"}</strong></span>`,
       `<span>${read.microRange ? `Range <strong>${price(read.microRange.width, 0)} pts · ${read.microRange.minutes}m</strong>` : "Range <strong>Not confirmed</strong>"}</span>`
     ].join("");
+    renderExpectedMove(lastSnapshot(), read);
     renderStructureQualification(read);
     renderPressureResponse(read.pressure);
     renderStructureAnalytics(read);
@@ -840,6 +845,65 @@
     el.structureStability.textContent = read.stability.windows
       ? `${read.stability.restored ? "DB restored · " : ""}Stable ${read.stability.windows} completed 5m window${read.stability.windows === 1 ? "" : "s"}`
       : "Completed 5m confirmation building";
+  }
+
+  function renderExpectedMove(latest, structureRead) {
+    const expectedMoveApi = globalThis.ExpectedMove;
+    const isCurrentExpiry = Boolean(state.nearestExpiry && latest.expiry === state.nearestExpiry);
+    if (!expectedMoveApi || !isCurrentExpiry) {
+      el.expectedMoveShell.dataset.tone = "building";
+      el.expectedMoveLower.textContent = "--";
+      el.expectedMoveUpper.textContent = "--";
+      el.expectedMoveLowerRead.textContent = "Available only on the nearest current expiry";
+      el.expectedMoveUpperRead.textContent = "Select the expiry marked nearest";
+      el.expectedMoveMeta.textContent = `Current expiry only${state.nearestExpiry ? ` · ${state.nearestExpiry}` : " · expiry resolving"}`;
+      return;
+    }
+
+    const opening = openingBaselineSnapshots(latest);
+    const openingIv = opening.map((snapshot) => snapshot.atmIv).filter((value) => value > 0);
+    if (opening.length < 3 || openingIv.length < 3) {
+      el.expectedMoveShell.dataset.tone = "building";
+      el.expectedMoveLower.textContent = "--";
+      el.expectedMoveUpper.textContent = "--";
+      el.expectedMoveLowerRead.textContent = "Need 3 exact 09:15–09:20 snapshots";
+      el.expectedMoveUpperRead.textContent = "No later snapshot will replace the open baseline";
+      el.expectedMoveMeta.textContent = `Building ${latest.expiry} one-session IV range`;
+      return;
+    }
+
+    const sessionOpen = median(opening.map((snapshot) => snapshot.spot));
+    const atmIv = median(openingIv);
+    const move = expectedMoveApi.calculateSessionExpectedMove(sessionOpen, atmIv);
+    if (!move) return;
+
+    const step = inferStrikeStep(latest.rows);
+    const lower = expectedMoveApi.classifyBoundary(move.lower, structureRead.support, step, "lower");
+    const upper = expectedMoveApi.classifyBoundary(move.upper, structureRead.resistance, step, "upper");
+    el.expectedMoveShell.dataset.tone = lower.state === "confluence" || upper.state === "confluence" ? "confluence" : "ready";
+    el.expectedMoveLower.textContent = price(move.lower, 0);
+    el.expectedMoveUpper.textContent = price(move.upper, 0);
+    el.expectedMoveLowerRead.textContent = expectedBoundaryText(lower, structureRead.support, "lower");
+    el.expectedMoveUpperRead.textContent = expectedBoundaryText(upper, structureRead.resistance, "upper");
+    el.expectedMoveMeta.textContent = `${latest.expiry} · Open ${price(move.anchor, 0)} · ATM IV ${price(move.atmIvPct, 2)}% · ±${price(move.distance, 0)} pts · open × IV × √(1/365)`;
+  }
+
+  function expectedBoundaryText(read, wall, kind) {
+    if (!wall || read.state === "unavailable") return `${kind === "upper" ? "CE resistance" : "PE support"} building`;
+    const level = price(wall, 0);
+    if (read.state === "confluence") {
+      return kind === "upper"
+        ? `${level} CE wall overlap · breakout needs withdrawal + 2 completed 5m closes above`
+        : `${level} PE wall overlap · breakdown needs withdrawal + 2 completed 5m closes below`;
+    }
+    if (read.state === "wall-inside") {
+      return kind === "upper"
+        ? `${level} CE wall is inside the expected range · test may arrive before upper limit`
+        : `${level} PE wall is inside the expected range · test may arrive before lower limit`;
+    }
+    return kind === "upper"
+      ? `${level} CE wall is beyond the expected upper limit`
+      : `${level} PE wall is beyond the expected lower limit`;
   }
 
   function renderResistanceMemory(latest) {
@@ -1973,7 +2037,7 @@
   function openingBaselineSnapshots(latest) {
     const sessionDate = istSessionDate(latest.time);
     return state.history.filter((snapshot) => {
-      if (snapshot.source !== latest.source || istSessionDate(snapshot.time) !== sessionDate) return false;
+      if (snapshot.source !== latest.source || snapshot.expiry !== latest.expiry || istSessionDate(snapshot.time) !== sessionDate) return false;
       const parts = istParts(snapshot.time);
       const minute = parts.hour * 60 + parts.minute;
       return minute >= 9 * 60 + 15 && minute < 9 * 60 + 20;

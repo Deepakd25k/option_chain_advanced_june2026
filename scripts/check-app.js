@@ -13,6 +13,7 @@ const requiredFiles = [
   "lib/session-store.js",
   "lib/session-playbook.js",
   "lib/resistance-memory.js",
+  "lib/expected-move.js",
   "db/schema.sql",
   "scripts/dev-server.js",
   "vercel.json",
@@ -35,6 +36,9 @@ for (const id of [
   "pressureMetrics",
   "pressureNarrative",
   "structureQualification",
+  "expectedMoveShell",
+  "expectedMoveLower",
+  "expectedMoveUpper",
   "structureAnalytics",
   "resistanceMemoryCard",
   "resistanceMemoryHeadline",
@@ -65,6 +69,14 @@ if (html.includes("ATM Flow Matrix") || html.includes('id="atmFlowTable"')) {
 }
 
 const app = fs.readFileSync(path.resolve(__dirname, "..", "src/app.js"), "utf8");
+if (!html.includes('<script src="/lib/expected-move.js"></script>')) {
+  console.error("Expected-move formula library must load before the app");
+  process.exit(1);
+}
+if (!html.includes("Current-Expiry Expected Move") || !html.includes("sqrt(1/365)")) {
+  console.error("Expected-move formula rulebook entry is missing");
+  process.exit(1);
+}
 if (app.includes("renderAtmFlowWatch") || app.includes("atmFlowRange")) {
   console.error("Legacy ATM Flow Matrix code should be fully removed");
   process.exit(1);
@@ -95,6 +107,9 @@ const calibrationGuards = [
   "NO OI-SUPPORTED EDGE",
   "OI-SUPPORTED RELEASE",
   "Greek-adjusted premium residual",
+  "renderExpectedMove(lastSnapshot(), read)",
+  "snapshot.expiry !== latest.expiry",
+  "open × IV × √(1/365)",
   "greekPremiumAttribution(latest",
   "buildParticipationRead(lastSnapshot())",
   "Writing-like",
@@ -148,6 +163,19 @@ for (const guard of [
     console.error(`Missing session range-history guard: ${guard}`);
     process.exit(1);
   }
+}
+
+const expectedMove = require(path.resolve(__dirname, "..", "lib/expected-move.js"));
+const sessionMove = expectedMove.calculateSessionExpectedMove(20000, Math.sqrt(365));
+if (!sessionMove || Math.abs(sessionMove.distance - 200) > 0.0001 || sessionMove.lower !== 19800 || sessionMove.upper !== 20200) {
+  console.error("One-session square-root expected move regression failed");
+  process.exit(1);
+}
+const upperConfluence = expectedMove.classifyBoundary(20225, 20250, 50, "upper");
+const lowerInside = expectedMove.classifyBoundary(19800, 19850, 50, "lower");
+if (upperConfluence.state !== "confluence" || lowerInside.state !== "wall-inside") {
+  console.error("Expected-move OI wall relationship regression failed");
+  process.exit(1);
 }
 
 const upstoxApi = fs.readFileSync(path.resolve(__dirname, "..", "api/upstox/option-chain.js"), "utf8");
