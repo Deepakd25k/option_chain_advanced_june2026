@@ -3,22 +3,61 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#101318">
+    <meta name="theme-color" id="themeColorMeta" content="#090c11">
     <title>Option Buyer Cockpit</title>
+    <script>
+      (() => {
+        const saved = localStorage.getItem("cockpit_theme");
+        const theme = saved || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      })();
+    </script>
     <link rel="stylesheet" href="/src/styles.css">
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-block">
-          <div class="brand-mark">OC</div>
+          <div class="brand-mark" aria-hidden="true"><span>OC</span><i></i></div>
           <div>
             <h1>Option Buyer Cockpit</h1>
             <p id="sourceLine">Formula-backed intraday Nifty option-chain read</p>
           </div>
         </div>
+        <section class="control-strip" aria-label="Data controls">
+          <label>
+            <span>Symbol</span>
+            <select id="symbolSelect">
+              <option value="NSE_INDEX|Nifty 50">NIFTY50</option>
+              <option value="NSE_INDEX|Nifty Bank">BANKNIFTY</option>
+              <option value="NSE_INDEX|Nifty Fin Service">FINNIFTY</option>
+              <option value="BSE_INDEX|SENSEX">SENSEX</option>
+            </select>
+          </label>
+          <label>
+            <span>Expiry</span>
+            <select id="expiryInput">
+              <option value="auto">Auto</option>
+            </select>
+          </label>
+          <input id="activeWindow" type="hidden" value="300">
+          <label>
+            <span>Refresh</span>
+            <select id="refreshInterval">
+              <option value="10000">10 sec</option>
+              <option value="20000" selected>20 sec</option>
+              <option value="30000">30 sec</option>
+              <option value="60000">60 sec</option>
+            </select>
+          </label>
+        </section>
         <div class="top-actions">
           <span class="recorder-pill" id="recorderStatus" title="Server session recorder status">DB checking</span>
+          <button class="theme-toggle" id="themeToggle" type="button" title="Switch to light theme" aria-label="Switch to light theme" aria-pressed="false">
+            <span class="theme-toggle-icon" aria-hidden="true"></span>
+            <span class="theme-toggle-label">Light</span>
+          </button>
           <button class="event-center-button" id="eventCenterButton" type="button" title="Open structure event notifications" aria-label="Open structure event notifications">
             <span>Events</span>
             <b id="eventUnreadCount" hidden>0</b>
@@ -33,33 +72,13 @@
       </header>
 
       <main>
-        <section class="control-strip" aria-label="Data controls">
-          <label>
-            Symbol
-            <select id="symbolSelect">
-              <option value="NSE_INDEX|Nifty 50">NIFTY50</option>
-              <option value="NSE_INDEX|Nifty Bank">BANKNIFTY</option>
-              <option value="NSE_INDEX|Nifty Fin Service">FINNIFTY</option>
-              <option value="BSE_INDEX|SENSEX">SENSEX</option>
-            </select>
-          </label>
-          <label>
-            Expiry
-            <select id="expiryInput">
-              <option value="auto">Auto</option>
-            </select>
-          </label>
-          <input id="activeWindow" type="hidden" value="300">
-          <label>
-            Refresh
-            <select id="refreshInterval">
-              <option value="10000">10 sec</option>
-              <option value="20000" selected>20 sec</option>
-              <option value="30000">30 sec</option>
-              <option value="60000">60 sec</option>
-            </select>
-          </label>
-        </section>
+        <nav class="workspace-nav" aria-label="Dashboard sections">
+          <a class="active" href="#marketStructureCard">Live Structure</a>
+          <a href="#resistanceMemoryCard">Resistance Memory</a>
+          <a href="#timeframeMatrix">Timeframes</a>
+          <a href="#calibrationLab">Calibration</a>
+          <a href="#sessionMemoryCard">Session Review</a>
+        </nav>
 
         <section class="dashboard-grid">
           <article class="panel span-2 structure-card" id="marketStructureCard">
@@ -96,43 +115,47 @@
                 <span>OI flow</span><span>Premium</span><span>Response</span><span>Path</span>
               </div>
             </section>
-            <div class="structure-location" id="structureLocation">
-              <span>Spot --</span><span>Support --</span><span>Resistance --</span><span>Range --</span>
-            </div>
-            <div class="expected-move-shell" id="expectedMoveShell" data-tone="building">
-              <div class="expected-move-level lower">
-                <span>Expected Lower</span>
-                <strong id="expectedMoveLower">--</strong>
-                <em id="expectedMoveLowerRead">Current-expiry opening baseline building</em>
+            <div class="structure-summary-grid">
+              <div class="structure-location" id="structureLocation">
+                <span>Spot --</span><span>Support --</span><span>Resistance --</span><span>Range --</span>
               </div>
-              <div class="expected-move-level upper">
-                <span>Expected Upper</span>
-                <strong id="expectedMoveUpper">--</strong>
-                <em id="expectedMoveUpperRead">Current-expiry opening baseline building</em>
-              </div>
-              <p id="expectedMoveMeta">One-session IV range · direction-neutral · current expiry only</p>
-            </div>
-            <div class="structure-qualification" id="structureQualification" aria-label="Qualified support pressure and resistance">
-              <div><span>Support</span><strong>Building</strong><em>Exact OI history needed</em></div>
-              <div><span>Current pressure</span><strong>Unproven</strong><em>Waiting for aligned flow</em></div>
-              <div><span>Resistance</span><strong>Building</strong><em>Exact OI history needed</em></div>
-            </div>
-            <section class="pressure-read" aria-label="Pressure response intelligence">
-              <div class="pressure-read-heading">
-                <div>
-                  <p class="eyebrow">Pressure–Response Intelligence</p>
-                  <strong id="pressureHeadline">Waiting for exact 5m inventory history</strong>
+              <div class="expected-move-shell" id="expectedMoveShell" data-tone="building">
+                <div class="expected-move-level lower">
+                  <span>Expected Lower</span>
+                  <strong id="expectedMoveLower">--</strong>
+                  <em id="expectedMoveLowerRead">Current-expiry opening baseline building</em>
                 </div>
-                <span class="pressure-verdict building" id="pressureVerdict">UNPROVEN</span>
+                <div class="expected-move-level upper">
+                  <span>Expected Upper</span>
+                  <strong id="expectedMoveUpper">--</strong>
+                  <em id="expectedMoveUpperRead">Current-expiry opening baseline building</em>
+                </div>
+                <p id="expectedMoveMeta">One-session IV range · direction-neutral · current expiry only</p>
               </div>
-              <div class="pressure-metrics" id="pressureMetrics">
-                <div><span>Flow breadth</span><strong>Building</strong></div>
-                <div><span>Spot response</span><strong>Building</strong></div>
-                <div><span>Wall migration</span><strong>Building</strong></div>
-                <div><span>Path load</span><strong>Building</strong></div>
+            </div>
+            <div class="structure-intelligence-grid">
+              <div class="structure-qualification" id="structureQualification" aria-label="Qualified support pressure and resistance">
+                <div><span>Support</span><strong>Building</strong><em>Exact OI history needed</em></div>
+                <div><span>Current pressure</span><strong>Unproven</strong><em>Waiting for aligned flow</em></div>
+                <div><span>Resistance</span><strong>Building</strong><em>Exact OI history needed</em></div>
               </div>
-              <p class="pressure-narrative" id="pressureNarrative">The inferred move driver will appear only after material OI and premium residual agree.</p>
-            </section>
+              <section class="pressure-read" aria-label="Pressure response intelligence">
+                <div class="pressure-read-heading">
+                  <div>
+                    <p class="eyebrow">Pressure–Response Intelligence</p>
+                    <strong id="pressureHeadline">Waiting for exact 5m inventory history</strong>
+                  </div>
+                  <span class="pressure-verdict building" id="pressureVerdict">UNPROVEN</span>
+                </div>
+                <div class="pressure-metrics" id="pressureMetrics">
+                  <div><span>Flow breadth</span><strong>Building</strong></div>
+                  <div><span>Spot response</span><strong>Building</strong></div>
+                  <div><span>Wall migration</span><strong>Building</strong></div>
+                  <div><span>Path load</span><strong>Building</strong></div>
+                </div>
+                <p class="pressure-narrative" id="pressureNarrative">The inferred move driver will appear only after material OI and premium residual agree.</p>
+              </section>
+            </div>
             <div class="structure-analytics" id="structureAnalytics" aria-label="Premium response and market participation"></div>
             <div class="structure-table" id="structureTable"></div>
             <div class="structure-evidence" id="structureEvidence"></div>
@@ -171,7 +194,7 @@
             </div>
           </article>
 
-          <article class="panel span-2">
+          <article class="panel span-2" id="timeframeMatrix">
             <div class="panel-heading">
               <div>
                 <p class="eyebrow">Timeframe Matrix</p>
@@ -197,7 +220,7 @@
             </div>
           </article>
 
-          <article class="panel span-2">
+          <article class="panel span-2" id="calibrationLab">
             <div class="panel-heading">
               <div>
                 <p class="eyebrow">Calibration Lab</p>
@@ -211,7 +234,7 @@
             <div class="calibration-grid" id="calibrationGrid"></div>
           </article>
 
-          <details class="panel span-2 collapsible-panel">
+          <details class="panel span-2 collapsible-panel" id="outcomeTracker">
             <summary>
               <div>
                 <p class="eyebrow">Outcome Tracker</p>
@@ -238,7 +261,7 @@
             </div>
           </details>
 
-          <details class="panel span-2 collapsible-panel">
+          <details class="panel span-2 collapsible-panel" id="formulaRulebook">
             <summary>
               <div>
                 <p class="eyebrow">Formula Rulebook</p>

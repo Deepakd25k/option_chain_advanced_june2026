@@ -72,8 +72,10 @@
 
   async function init() {
     bindElements();
+    syncThemeControl();
     restoreControls();
     bindEvents();
+    initWorkspaceNavigation();
     await loadExpiries();
     await hydrateSessionHistory();
     await refresh();
@@ -83,7 +85,7 @@
 
   function bindElements() {
     [
-      "sourceLine", "recorderStatus", "refreshButton", "pauseButton", "symbolSelect", "expiryInput",
+      "sourceLine", "recorderStatus", "themeToggle", "themeColorMeta", "refreshButton", "pauseButton", "symbolSelect", "expiryInput",
       "activeWindow", "refreshInterval", "marketStructureCard", "structureHeadline", "structureOrigin",
       "structureState", "structureLocation", "structureQualification", "structureAnalytics", "structureTable", "structureEvidence", "structureDecision",
       "expectedMoveShell", "expectedMoveLower", "expectedMoveUpper", "expectedMoveLowerRead", "expectedMoveUpperRead", "expectedMoveMeta",
@@ -112,6 +114,7 @@
   }
 
   function bindEvents() {
+    el.themeToggle.addEventListener("click", toggleTheme);
     el.refreshButton.addEventListener("click", refresh);
     el.pauseButton.addEventListener("click", togglePause);
     el.exportCalibration.addEventListener("click", exportCalibration);
@@ -144,6 +147,44 @@
         scheduleNext();
       });
     });
+  }
+
+  function toggleTheme() {
+    const current = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+    applyTheme(current === "dark" ? "light" : "dark", true);
+  }
+
+  function syncThemeControl() {
+    applyTheme(document.documentElement.dataset.theme === "light" ? "light" : "dark", false);
+  }
+
+  function applyTheme(theme, persist) {
+    const light = theme === "light";
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    el.themeToggle.setAttribute("aria-pressed", String(light));
+    el.themeToggle.setAttribute("aria-label", `Switch to ${light ? "dark" : "light"} theme`);
+    el.themeToggle.title = `Switch to ${light ? "dark" : "light"} theme`;
+    el.themeToggle.querySelector(".theme-toggle-label").textContent = light ? "Dark" : "Light";
+    el.themeColorMeta.content = light ? "#f3f6fa" : "#090c11";
+    if (persist) localStorage.setItem("cockpit_theme", theme);
+  }
+
+  function initWorkspaceNavigation() {
+    const links = [...document.querySelectorAll(".workspace-nav a")];
+    const sections = links.map((link) => document.querySelector(link.getAttribute("href"))).filter(Boolean);
+    links.forEach((link) => {
+      link.addEventListener("click", () => {
+        links.forEach((item) => item.classList.toggle("active", item === link));
+      });
+    });
+    if (!("IntersectionObserver" in window)) return;
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (!visible) return;
+      links.forEach((link) => link.classList.toggle("active", link.getAttribute("href") === `#${visible.target.id}`));
+    }, { rootMargin: "-18% 0px -68%", threshold: [0.05, 0.2, 0.5] });
+    sections.forEach((section) => observer.observe(section));
   }
 
   function resetSessionState() {
