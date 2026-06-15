@@ -10,11 +10,17 @@ const requiredFiles = [
   "api/session/playbook.js",
   "api/session/resistance-memory.js",
   "api/cron/capture.js",
+  "api/cron/institutional.js",
+  "api/institutional/research.js",
   "lib/session-store.js",
   "lib/session-playbook.js",
   "lib/resistance-memory.js",
   "lib/expected-move.js",
   "lib/fifteen-minute-outlook.js",
+  "lib/institutional-research.js",
+  "lib/institutional-store.js",
+  "lib/institutional-sync.js",
+  "lib/nse-institutional.js",
   "db/schema.sql",
   "scripts/dev-server.js",
   "vercel.json",
@@ -62,7 +68,18 @@ for (const id of [
   "eventUnreadCount",
   "eventToastStack",
   "eventDrawer",
-  "eventTape"
+  "eventTape",
+  "institutionalDesk",
+  "institutionalDeskSummary",
+  "institutionalDeskDate",
+  "institutionalDeskState",
+  "institutionalVerdict",
+  "institutionalMetrics",
+  "institutionalPattern",
+  "institutionalCash",
+  "institutionalOptions",
+  "institutionalNextSession",
+  "institutionalFooter"
 ]) {
   if (!html.includes(`id="${id}"`)) {
     console.error(`Missing DOM id: ${id}`);
@@ -158,6 +175,21 @@ const calibrationGuards = [
   "ACCEPTED BREAKOUT",
   "two consecutive completed 5m closes"
 ];
+
+for (const guard of [
+  "loadInstitutionalResearch()",
+  "/api/institutional/research",
+  "Long change",
+  "signedCompact(today.long)} − (${signedCompact(today.short)})",
+  "Index-options context",
+  "Next-session conditional map",
+  "same stored Market Structure Intelligence levels"
+]) {
+  if (!app.includes(guard)) {
+    console.error(`Missing institutional research UI guard: ${guard}`);
+    process.exit(1);
+  }
+}
 
 for (const guard of calibrationGuards) {
   if (!app.includes(guard)) {
@@ -487,6 +519,60 @@ if (
   || !gapAwarePlaybook.story.learning.includes("were ignored, not estimated")
 ) {
   console.error("Gap-aware session playbook regression failed");
+  process.exit(1);
+}
+
+const { parseParticipantOi } = require(path.resolve(__dirname, "..", "lib/nse-institutional.js"));
+const { buildInstitutionalResearch } = require(path.resolve(__dirname, "..", "lib/institutional-research.js"));
+const participantFixture = `""Participant wise Open Interest (no. of contracts) in Equity Derivatives as on Jun 15, 2026"",,,,,,,,,,,,,,
+Client Type,Future Index Long,Future Index Short,Future Stock Long,Future Stock Short,Option Index Call Long,Option Index Put Long,Option Index Call Short,Option Index Put Short,Option Stock Call Long,Option Stock Put Long,Option Stock Call Short,Option Stock Put Short,Total Long Contracts,Total Short Contracts
+FII,41074,282315,4135474,3344880,672396,1145247,924723,600061,236813,332125,378538,234653,6563129,5765169
+TOTAL,422520,422520,8650257,8650257,5516613,5465659,5516613,5465659,3741953,2252222,3741953,2252222,26049224,26049224`;
+const parsedParticipant = parseParticipantOi(participantFixture, "2026-06-15", "official-fixture");
+if (!parsedParticipant.verified || parsedParticipant.fii.futureIndexLong !== 41074 || parsedParticipant.fii.futureIndexShort !== 282315) {
+  console.error("Official NSE participant parser regression failed");
+  process.exit(1);
+}
+let rejectedMismatch = false;
+try {
+  parseParticipantOi(participantFixture, "2026-06-14", "official-fixture");
+} catch (error) {
+  rejectedMismatch = error.message.includes("date mismatch");
+}
+if (!rejectedMismatch) {
+  console.error("NSE participant parser must reject mismatched report dates");
+  process.exit(1);
+}
+const institutionalResearch = buildInstitutionalResearch([
+  {
+    tradeDate: "2026-06-12",
+    verified: true,
+    source: { participantOiUrl: "official-fixture-previous" },
+    fii: { futureIndexLong: 39971, futureIndexShort: 283594, optionIndexCallLong: 671000, optionIndexPutLong: 1142000, optionIndexCallShort: 925000, optionIndexPutShort: 601000 }
+  },
+  parsedParticipant
+]);
+if (
+  !institutionalResearch.ready
+  || institutionalResearch.today.long !== 1103
+  || institutionalResearch.today.short !== -1279
+  || institutionalResearch.today.net !== 2382
+  || institutionalResearch.latest.net !== -241241
+  || institutionalResearch.activity.key !== "bullish-repositioning"
+) {
+  console.error("Institutional long-short-net arithmetic regression failed");
+  process.exit(1);
+}
+
+const vercel = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "vercel.json"), "utf8"));
+if (!(vercel.crons || []).some((cron) => cron.path === "/api/cron/institutional" && cron.schedule === "30 14 * * *")) {
+  console.error("Institutional 8:00 PM IST EOD cron is missing");
+  process.exit(1);
+}
+
+const schema = fs.readFileSync(path.resolve(__dirname, "..", "db/schema.sql"), "utf8");
+if (!schema.includes("CREATE TABLE IF NOT EXISTS institutional_daily")) {
+  console.error("Institutional database table is missing");
   process.exit(1);
 }
 

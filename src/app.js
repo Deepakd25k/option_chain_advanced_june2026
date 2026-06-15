@@ -49,6 +49,9 @@
     outlookLastBucket: null,
     sessionPlaybook: null,
     playbookLastChecked: 0,
+    institutionalResearch: null,
+    institutionalReason: "Loading verified NSE EOD data",
+    institutionalLastChecked: 0,
     eventTape: freshEventTapeState(),
     structureStability: {
       key: null,
@@ -80,6 +83,7 @@
     await hydrateSessionHistory();
     await refresh();
     await loadSessionPlaybook();
+    await loadInstitutionalResearch();
     scheduleNext();
   }
 
@@ -99,7 +103,10 @@
       "resistanceMemoryCard", "resistanceMemoryHeadline", "resistanceMemoryMeta", "resistanceMemoryState",
       "resistanceMemoryStrip", "resistanceMemoryGrid", "resistanceMemoryTimeline", "resistanceMemoryVerdict",
       "resistanceMemoryMeaning", "resistanceMemoryInvalidation",
-      "eventToastStack", "eventDrawerBackdrop", "eventDrawer", "eventDrawerClose", "eventDrawerSummary", "eventTape"
+      "eventToastStack", "eventDrawerBackdrop", "eventDrawer", "eventDrawerClose", "eventDrawerSummary", "eventTape",
+      "institutionalDesk", "institutionalDeskTitle", "institutionalDeskSummary", "institutionalDeskDate", "institutionalDeskState",
+      "institutionalVerdict", "institutionalMetrics", "institutionalPattern", "institutionalCash", "institutionalOptions",
+      "institutionalNextSession", "institutionalFooter"
     ].forEach((id) => {
       el[id] = document.getElementById(id);
     });
@@ -129,6 +136,7 @@
       await hydrateSessionHistory();
       await refresh();
       await loadSessionPlaybook();
+      renderInstitutionalResearch();
       scheduleNext();
     });
     el.expiryInput.addEventListener("change", async () => {
@@ -137,6 +145,7 @@
       await hydrateSessionHistory();
       await refresh();
       await loadSessionPlaybook();
+      renderInstitutionalResearch();
       scheduleNext();
     });
     [el.symbolSelect, el.expiryInput, el.activeWindow, el.refreshInterval].forEach((control) => {
@@ -362,9 +371,11 @@
       if (!response.ok) throw new Error(payload.error || "Unable to load session playbook");
       state.sessionPlaybook = payload.ready ? payload.playbook : null;
       renderSessionPlaybook(payload.reason || "");
+      renderInstitutionalResearch();
     } catch (error) {
       state.sessionPlaybook = null;
       renderSessionPlaybook(error.name === "TimeoutError" ? "Playbook request timed out" : error.message);
+      renderInstitutionalResearch();
     }
   }
 
@@ -435,6 +446,197 @@
       ? ` Major walls: PE ${price(closing.majorSupport.strike, 0)}, CE ${price(closing.majorResistance.strike, 0)}.`
       : "";
     el.memoryFooter.textContent = `Formula ${playbook.formulaVersion}. Levels use the same nearest-11-strike max-OI rule as Market Structure Intelligence.${majorContext}${gapRule}${matchDates}${legacyNote}`;
+  }
+
+  async function loadInstitutionalResearch() {
+    state.institutionalLastChecked = Date.now();
+    state.institutionalReason = "Loading verified NSE EOD data";
+    renderInstitutionalResearch();
+    try {
+      const response = await fetch("/api/institutional/research", {
+        cache: "no-store",
+        signal: AbortSignal.timeout(35 * 1000)
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || payload.reason || "Institutional research unavailable");
+      state.institutionalResearch = payload.ready ? payload.research : null;
+      state.institutionalReason = payload.reason || (payload.research && payload.research.reason) || (payload.configured === false ? "Database is not configured" : "Verified participant history is building");
+    } catch (error) {
+      state.institutionalResearch = null;
+      state.institutionalReason = error.name === "TimeoutError" ? "NSE history sync is still running; reopen this card shortly" : error.message;
+    }
+    renderInstitutionalResearch();
+  }
+
+  function renderInstitutionalResearch() {
+    if (!el.institutionalDesk) return;
+    const research = state.institutionalResearch;
+    if (!research || !research.ready) {
+      el.institutionalDeskSummary.textContent = state.institutionalReason || "Open after NSE publishes the verified participant report.";
+      el.institutionalDeskDate.textContent = "NSE EOD pending";
+      el.institutionalDeskState.textContent = "BUILDING";
+      el.institutionalDeskState.className = "";
+      el.institutionalVerdict.dataset.tone = "neutral";
+      el.institutionalVerdict.innerHTML = `
+        <div><span>Overall institutional reading</span><strong>Waiting for verified NSE data</strong><p>${escapeHtml(state.institutionalReason || "No position will be inferred from an unverified report.")}</p></div>
+        <div class="institutional-verdict-facts"><span>Current posture <b>--</b></span><span>Today's action <b>--</b></span><span>5-session regime <b>--</b></span><span>Cash confirmation <b>--</b></span></div>
+      `;
+      el.institutionalMetrics.innerHTML = "";
+      el.institutionalPattern.innerHTML = "";
+      el.institutionalCash.innerHTML = "";
+      el.institutionalOptions.innerHTML = "";
+      el.institutionalNextSession.innerHTML = "";
+      return;
+    }
+
+    const latest = research.latest;
+    const today = research.today;
+    const five = research.five;
+    const cash = research.cash;
+    const posture = research.posture;
+    const activity = research.activity;
+    const regime = research.regime;
+    const quality = research.dataQuality;
+    const tone = regime.tone || "neutral";
+    const cashRead = cash.available ? `${signedCrore(cash.today)} Cr ${cash.today >= 0 ? "buy" : "sell"}` : "Not stored for this date";
+
+    el.institutionalDeskSummary.textContent = `${activity.label} · ${posture.label} · ${quality.verifiedSessions} verified sessions`;
+    el.institutionalDeskDate.textContent = `Verified ${displayDate(research.reportDate)}`;
+    el.institutionalDeskState.textContent = regime.label;
+    el.institutionalDeskState.className = tone;
+    el.institutionalVerdict.dataset.tone = tone;
+    el.institutionalVerdict.innerHTML = `
+      <div>
+        <span>Overall institutional reading</span>
+        <strong>${escapeHtml(regime.label)}</strong>
+        <p>${escapeHtml(regime.meaning)}</p>
+      </div>
+      <div class="institutional-verdict-facts">
+        <span>Current posture <b>${escapeHtml(posture.label)}</b></span>
+        <span>Today's action <b>${escapeHtml(activity.label)}</b></span>
+        <span>${five.available ? `${five.sessions}-session net` : "5-session net"} <b>${five.available ? signedCompact(five.net) : "Building"}</b></span>
+        <span>Cash confirmation <b>${escapeHtml(cashRead)}</b></span>
+      </div>
+    `;
+
+    el.institutionalMetrics.innerHTML = [
+      institutionalMetric("Long positions", compact(latest.long), signedCompact(today.long), today.longPct, research.materiality.long, research.explanation.long, "long"),
+      institutionalMetric("Short positions", compact(latest.short), signedCompact(today.short), today.shortPct, research.materiality.short, research.explanation.short, "short"),
+      institutionalMetric("Net change today", signedCompact(today.net), `${signedCompact(today.long)} − (${signedCompact(today.short)})`, today.netPctOfGross, research.materiality.net, research.explanation.net, "net"),
+      institutionalMetric("Current net position", signedCompact(latest.net), `${(latest.longRatio * 100).toFixed(1)}% longs`, null, null, research.explanation.current, "position")
+    ].join("");
+
+    el.institutionalPattern.innerHTML = five.available ? `
+      <div class="institutional-section-heading"><span>${five.sessions}-session behaviour</span><strong>${escapeHtml(fiveSessionLabel(five))}</strong></div>
+      <div class="institutional-pattern-grid">
+        <span>Long change <b>${signedCompact(five.long)}</b></span>
+        <span>Short change <b>${signedCompact(five.short)}</b></span>
+        <span>Net improvement <b>${signedCompact(five.net)}</b></span>
+        <span>Persistence <b>${five.netImprovedSessions}/${five.sessions} sessions improved</b></span>
+      </div>
+      <p>${escapeHtml(fiveSessionMeaning(five))}</p>
+    ` : `<div class="institutional-section-heading"><span>5-session behaviour</span><strong>History building</strong></div>`;
+
+    el.institutionalCash.innerHTML = `
+      <div class="institutional-section-heading"><span>Cash market alignment</span><strong>${cash.available ? escapeHtml(cashRead) : "Pending"}</strong></div>
+      <p>${escapeHtml(cash.meaning)}</p>
+      <div class="institutional-context-facts">
+        <span>DII today <b>${cash.diiToday === null ? "--" : `${signedCrore(cash.diiToday)} Cr`}</b></span>
+        <span>Stored cash sessions <b>${cash.collectedSessions}</b></span>
+        <span>${cash.fiveSessionCount}-session FII cash <b>${cash.fiveSessionTotal === null ? "--" : `${signedCrore(cash.fiveSessionTotal)} Cr`}</b></span>
+      </div>
+    `;
+    el.institutionalOptions.innerHTML = `
+      <div class="institutional-section-heading"><span>Index-options context</span><strong>Hedge map, not direction alone</strong></div>
+      <div class="institutional-context-facts option-context">
+        <span>Call longs <b>${signedCompact(today.callLong)}</b></span>
+        <span>Call shorts <b>${signedCompact(today.callShort)}</b></span>
+        <span>Put longs <b>${signedCompact(today.putLong)}</b></span>
+        <span>Put shorts <b>${signedCompact(today.putShort)}</b></span>
+      </div>
+      <p>Options positions can be hedges. Futures posture, cash alignment, and next-day live OI must agree before using them directionally.</p>
+    `;
+    renderInstitutionalNextSession(research);
+    el.institutionalFooter.innerHTML = `Verified participant report: <a href="${escapeHtml(research.source.participantOiUrl || "https://www.nseindia.com/all-reports-derivatives")}" target="_blank" rel="noreferrer">NSE participant-wise OI</a>. Index futures are aggregate index contracts, not NIFTY-only. Daily server sync is scheduled for 8:00 PM IST; NSE holidays are skipped. Cash history is stored prospectively because NSE's live cash endpoint does not provide this report's historical archive.`;
+  }
+
+  function renderInstitutionalNextSession(research) {
+    const playbook = state.sessionPlaybook;
+    const closing = playbook && playbook.closing;
+    if (!closing || !closing.support || !closing.resistance) {
+      el.institutionalNextSession.innerHTML = `
+        <div class="institutional-section-heading"><span>Next-session preparation</span><strong>Waiting for completed option-chain session</strong></div>
+        <p>FII context is ready. Exact support and resistance will use the same stored Market Structure Intelligence levels after the option-chain session completes.</p>
+      `;
+      return;
+    }
+    const support = closing.support.strike;
+    const resistance = closing.resistance.strike;
+    const priorClose = closing.spot;
+    const bullishContext = research.regime.tone === "positive" || research.activity.tone === "positive";
+    const bearishContext = research.regime.tone === "negative" || research.activity.tone === "negative";
+    el.institutionalNextSession.innerHTML = `
+      <div class="institutional-section-heading"><span>Next-session conditional map</span><strong>Levels from stored option-chain intelligence</strong></div>
+      <div class="institutional-level-strip">
+        <span>Prior close <b>${price(priorClose, 0)}</b></span>
+        <span>OI support <b>${price(support, 0)}</b></span>
+        <span>OI resistance <b>${price(resistance, 0)}</b></span>
+      </div>
+      <div class="institutional-scenario-grid">
+        <article data-tone="positive"><span>Support holds</span><strong>${bullishContext ? "Institutional context supports confirmation" : "Needs fresh bullish proof"}</strong><p>Use only if PE defence persists, ATM premium responds, and completed 5m spot remains above ${price(support, 0)}. Then ${price(resistance, 0)} becomes the first test.</p></article>
+        <article data-tone="negative"><span>Support fails</span><strong>${bearishContext ? "Institutional context supports confirmation" : "Needs fresh bearish proof"}</strong><p>Use only after completed 5m acceptance below ${price(support, 0)} with PE withdrawal or CE writing. A wick below the level is not confirmation.</p></article>
+        <article data-tone="neutral"><span>Between levels</span><strong>No pre-decided direction</strong><p>If live OI remains two-sided between ${price(support, 0)} and ${price(resistance, 0)}, treat FII positioning as background context and wait for an actual wall transition.</p></article>
+      </div>
+    `;
+  }
+
+  function institutionalMetric(label, value, change, changePct, materiality, meaning, kind) {
+    const pctText = changePct === null || changePct === undefined ? "" : ` (${signedPlainPercent(changePct)})`;
+    const rank = materiality && materiality.rank !== null ? `${materiality.label} · P${materiality.rank}` : materiality ? materiality.label : "Position snapshot";
+    return `
+      <article class="institutional-metric ${escapeHtml(kind)}">
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(value)}</strong>
+        <div><b>${escapeHtml(change)}${escapeHtml(pctText)}</b><small>${escapeHtml(rank)}</small></div>
+        <p>${escapeHtml(meaning)}</p>
+      </article>
+    `;
+  }
+
+  function fiveSessionLabel(five) {
+    if (five.long > 0 && five.short < 0) return "LONGS ADDED + SHORTS CLOSED";
+    if (five.long < 0 && five.short > 0) return "LONGS CLOSED + SHORTS ADDED";
+    if (five.long > 0 && five.short > 0) return "BOTH SIDES EXPANDED";
+    if (five.long < 0 && five.short < 0) return "BOTH SIDES REDUCED";
+    return "MIXED POSITION CHANGE";
+  }
+
+  function fiveSessionMeaning(five) {
+    if (five.long > 0 && five.short < 0) return `Over ${five.sessions} session${five.sessions === 1 ? "" : "s"}, bullish contracts increased and bearish contracts decreased. Both effects improved the net position.`;
+    if (five.long < 0 && five.short > 0) return `Over ${five.sessions} session${five.sessions === 1 ? "" : "s"}, bullish contracts decreased and bearish contracts increased. Both effects weakened the net position.`;
+    if (five.long > 0 && five.short > 0) return `Both sides added exposure; ${five.net >= 0 ? "longs grew faster" : "shorts grew faster"}. This can include hedging.`;
+    if (five.long < 0 && five.short < 0) return `Both sides reduced exposure; ${five.net >= 0 ? "short covering was larger" : "long reduction was larger"}. This is position reduction, not fresh buildup.`;
+    return "The five-session long and short changes do not form a clean directional combination.";
+  }
+
+  function signedCompact(value) {
+    const numeric = number(value);
+    return `${numeric > 0 ? "+" : ""}${compact(numeric)}`;
+  }
+
+  function signedPlainPercent(value) {
+    const numeric = number(value);
+    return `${numeric > 0 ? "+" : ""}${numeric.toFixed(1)}%`;
+  }
+
+  function signedCrore(value) {
+    const numeric = number(value);
+    return `${numeric > 0 ? "+" : ""}${numeric.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+
+  function displayDate(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return String(value || "--");
+    return new Date(`${value}T12:00:00+05:30`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
   }
 
   function updateRecorderFromSave(recorder, snapshotTime) {

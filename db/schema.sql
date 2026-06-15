@@ -30,3 +30,16 @@ CREATE TABLE IF NOT EXISTS session_playbooks (
 
 CREATE INDEX IF NOT EXISTS session_playbooks_lookup_idx
 ON session_playbooks (instrument_key, session_date DESC);
+
+CREATE TABLE IF NOT EXISTS institutional_daily (
+  trade_date DATE PRIMARY KEY,
+  verified BOOLEAN NOT NULL DEFAULT FALSE,
+  participant_report JSONB NOT NULL,
+  cash_report JSONB,
+  source JSONB NOT NULL,
+  fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS institutional_daily_date_idx
+ON institutional_daily (trade_date DESC);

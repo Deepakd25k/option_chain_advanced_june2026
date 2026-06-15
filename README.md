@@ -21,6 +21,7 @@ Formula-backed intraday option-chain dashboard for Indian index option buyers. I
 - Outcome Tracker and Formula Rulebook stay collapsed until opened.
 - Mobile responsive layout.
 - Neon Postgres session recorder: restores the open baseline and exact rolling windows after refresh or redeploy.
+- Institutional Research Desk: collapsed EOD card built from verified NSE participant-wise OI and daily FII/DII cash data, with simple long/short/net meanings and conditional next-session context.
 
 ## Run Locally
 
@@ -157,6 +158,21 @@ After a completed market session, `/api/session/playbook` builds and stores a ve
 - keeps exact opening/closing walls and contiguous observed blocks eligible for session memory; a missing opening or closing snapshot still makes the session partial
 
 The card appears immediately below Formula Rulebook. It is a next-session preparation aid, not a guaranteed direction forecast.
+
+### Institutional Research Desk
+
+The bottom-most collapsed card uses the official NSE participant-wise open-interest report. It verifies that the date printed inside each CSV matches the requested trade date and rejects future-dated or internally inconsistent reports before saving them.
+
+- first use restores the latest 30 calendar days; the daily server job backfills 45 calendar days and keeps the latest 21 verified trading sessions available for analysis
+- `net change = change in index-futures longs - change in index-futures shorts`; closing shorts therefore improves net position because a negative short change is subtracted
+- current posture, today's activity, five-session persistence, and change materiality are shown separately so a one-day improvement is not confused with an already net-long position
+- index options are shown as hedging context only; they do not independently produce a bullish or bearish verdict
+- next-session support and resistance come from the same stored option-chain levels used by Market Structure Intelligence and remain conditional on fresh completed-5m OI confirmation
+- the Telegram-style Market Mood Index is intentionally excluded because its formula and audit trail are not published by NSE
+
+The Vercel cron runs at `14:30 UTC`, which is `20:00 IST`, through `/api/cron/institutional`. Keep both `DATABASE_URL` and `CRON_SECRET` configured in Vercel. On holidays or weekends, missing NSE files are skipped without creating fake rows.
+
+NSE's cash endpoint exposes the latest published FII/DII cash report rather than this participant file's historical archive. Cash history is therefore stored daily from the feature's deployment date; the dashboard labels the number of cash sessions actually collected instead of backfilling estimates.
 
 ### Recording While The Dashboard Is Closed
 
