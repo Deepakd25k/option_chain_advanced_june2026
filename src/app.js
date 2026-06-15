@@ -498,7 +498,8 @@
     const regime = research.regime;
     const quality = research.dataQuality;
     const tone = regime.tone || "neutral";
-    const cashRead = cash.available ? `${signedCrore(cash.today)} Cr ${cash.today >= 0 ? "buy" : "sell"}` : "Not stored for this date";
+    const cashRead = cash.available ? `${signedCrore(cash.today)} Cr ${cash.today >= 0 ? "buying" : "selling"}` : "Is date ka cash data pending";
+    const plainRead = institutionalPlainRead(research);
 
     el.institutionalDeskSummary.textContent = `${activity.label} · ${posture.label} · ${quality.verifiedSessions} verified sessions`;
     el.institutionalDeskDate.textContent = `Verified ${displayDate(research.reportDate)}`;
@@ -507,54 +508,54 @@
     el.institutionalVerdict.dataset.tone = tone;
     el.institutionalVerdict.innerHTML = `
       <div>
-        <span>Overall institutional reading</span>
+        <span>Seedha matlab</span>
         <strong>${escapeHtml(regime.label)}</strong>
-        <p>${escapeHtml(regime.meaning)}</p>
+        <p>${escapeHtml(plainRead)}</p>
       </div>
       <div class="institutional-verdict-facts">
-        <span>Current posture <b>${escapeHtml(posture.label)}</b></span>
-        <span>Today's action <b>${escapeHtml(activity.label)}</b></span>
-        <span>${five.available ? `${five.sessions}-session net` : "5-session net"} <b>${five.available ? signedCompact(five.net) : "Building"}</b></span>
-        <span>Cash confirmation <b>${escapeHtml(cashRead)}</b></span>
+        <span>Abhi FII position <b>${escapeHtml(posture.label)}</b></span>
+        <span>Aaj ka change <b>${escapeHtml(activity.label)}</b></span>
+        <span>${five.available ? `Pichhle ${five.sessions} sessions` : "5-session trend"} <b>${five.available ? `${signedCompact(five.net)} net change` : "Building"}</b></span>
+        <span>Cash market <b>${escapeHtml(cashRead)}</b></span>
       </div>
     `;
 
     el.institutionalMetrics.innerHTML = [
-      institutionalMetric("Long positions", compact(latest.long), signedCompact(today.long), today.longPct, research.materiality.long, research.explanation.long, "long"),
-      institutionalMetric("Short positions", compact(latest.short), signedCompact(today.short), today.shortPct, research.materiality.short, research.explanation.short, "short"),
-      institutionalMetric("Net change today", signedCompact(today.net), `${signedCompact(today.long)} − (${signedCompact(today.short)})`, today.netPctOfGross, research.materiality.net, research.explanation.net, "net"),
-      institutionalMetric("Current net position", signedCompact(latest.net), `${(latest.longRatio * 100).toFixed(1)}% longs`, null, null, research.explanation.current, "position")
+      institutionalMetric("FII Long Positions", compact(latest.long), `Aaj ${signedCompact(today.long)}`, today.longPct, research.materiality.long, research.explanation.long, "long"),
+      institutionalMetric("FII Short Positions", compact(latest.short), `Aaj ${signedCompact(today.short)}`, today.shortPct, research.materiality.short, research.explanation.short, "short"),
+      institutionalMetric("Aaj Net Position Change", signedCompact(today.net), `${signedCompact(today.long)} − (${signedCompact(today.short)})`, today.netPctOfGross, research.materiality.net, research.explanation.net, "net"),
+      institutionalMetric("Abhi Total Net Position", signedCompact(latest.net), `${(latest.longRatio * 100).toFixed(1)}% long · ${(100 - latest.longRatio * 100).toFixed(1)}% short`, null, null, research.explanation.current, "position")
     ].join("");
 
     el.institutionalPattern.innerHTML = five.available ? `
-      <div class="institutional-section-heading"><span>${five.sessions}-session behaviour</span><strong>${escapeHtml(fiveSessionLabel(five))}</strong></div>
+      <div class="institutional-section-heading"><span>Pichhle ${five.sessions} sessions me kya hua</span><strong>${escapeHtml(fiveSessionLabel(five))}</strong></div>
       <div class="institutional-pattern-grid">
-        <span>Long change <b>${signedCompact(five.long)}</b></span>
-        <span>Short change <b>${signedCompact(five.short)}</b></span>
-        <span>Net improvement <b>${signedCompact(five.net)}</b></span>
-        <span>Persistence <b>${five.netImprovedSessions}/${five.sessions} sessions improved</b></span>
+        <span>Longs me change <b>${signedCompact(five.long)}</b></span>
+        <span>Shorts me change <b>${signedCompact(five.short)}</b></span>
+        <span>Total net effect <b>${signedCompact(five.net)}</b></span>
+        <span>Kitna consistent <b>${five.netImprovedSessions}/${five.sessions} sessions improve hue</b></span>
       </div>
       <p>${escapeHtml(fiveSessionMeaning(five))}</p>
     ` : `<div class="institutional-section-heading"><span>5-session behaviour</span><strong>History building</strong></div>`;
 
     el.institutionalCash.innerHTML = `
-      <div class="institutional-section-heading"><span>Cash market alignment</span><strong>${cash.available ? escapeHtml(cashRead) : "Pending"}</strong></div>
+      <div class="institutional-section-heading"><span>Cash market me FIIs/DIIs ne kya kiya</span><strong>${cash.available ? escapeHtml(cashRead) : "Pending"}</strong></div>
       <p>${escapeHtml(cash.meaning)}</p>
       <div class="institutional-context-facts">
-        <span>DII today <b>${cash.diiToday === null ? "--" : `${signedCrore(cash.diiToday)} Cr`}</b></span>
-        <span>Stored cash sessions <b>${cash.collectedSessions}</b></span>
-        <span>${cash.fiveSessionCount}-session FII cash <b>${cash.fiveSessionTotal === null ? "--" : `${signedCrore(cash.fiveSessionTotal)} Cr`}</b></span>
+        <span>Aaj DII flow <b>${cash.diiToday === null ? "--" : `${signedCrore(cash.diiToday)} Cr`}</b></span>
+        <span>Kitne din ka data stored <b>${cash.collectedSessions} session</b></span>
+        <span>${cash.fiveSessionCount}-session FII total <b>${cash.fiveSessionTotal === null ? "--" : `${signedCrore(cash.fiveSessionTotal)} Cr`}</b></span>
       </div>
     `;
     el.institutionalOptions.innerHTML = `
-      <div class="institutional-section-heading"><span>Index-options context</span><strong>Hedge map, not direction alone</strong></div>
+      <div class="institutional-section-heading"><span>Index options me position change</span><strong>Sirf context · direct direction nahi</strong></div>
       <div class="institutional-context-facts option-context">
-        <span>Call longs <b>${signedCompact(today.callLong)}</b></span>
-        <span>Call shorts <b>${signedCompact(today.callShort)}</b></span>
-        <span>Put longs <b>${signedCompact(today.putLong)}</b></span>
-        <span>Put shorts <b>${signedCompact(today.putShort)}</b></span>
+        <span>Call longs change <b>${signedCompact(today.callLong)}</b></span>
+        <span>Call shorts change <b>${signedCompact(today.callShort)}</b></span>
+        <span>Put longs change <b>${signedCompact(today.putLong)}</b></span>
+        <span>Put shorts change <b>${signedCompact(today.putShort)}</b></span>
       </div>
-      <p>Options positions can be hedges. Futures posture, cash alignment, and next-day live OI must agree before using them directionally.</p>
+      <p>Options positions hedging ke liye bhi ho sakti hain. Is row ko akela bullish/bearish signal mat samjho; futures position, cash flow aur next-day live OI ka agreement zaroori hai.</p>
     `;
     renderInstitutionalNextSession(research);
     el.institutionalFooter.innerHTML = `Verified participant report: <a href="${escapeHtml(research.source.participantOiUrl || "https://www.nseindia.com/all-reports-derivatives")}" target="_blank" rel="noreferrer">NSE participant-wise OI</a>. Index futures are aggregate index contracts, not NIFTY-only. Daily server sync is scheduled for 8:00 PM IST; NSE holidays are skipped. Cash history is stored prospectively because NSE's live cash endpoint does not provide this report's historical archive.`;
@@ -565,8 +566,8 @@
     const closing = playbook && playbook.closing;
     if (!closing || !closing.support || !closing.resistance) {
       el.institutionalNextSession.innerHTML = `
-        <div class="institutional-section-heading"><span>Next-session preparation</span><strong>Waiting for completed option-chain session</strong></div>
-        <p>FII context is ready. Exact support and resistance will use the same stored Market Structure Intelligence levels after the option-chain session completes.</p>
+        <div class="institutional-section-heading"><span>Kal ke liye plan</span><strong>Completed option-chain session ka wait</strong></div>
+        <p>FII context ready hai. Exact support aur resistance completed session ke stored Market Structure Intelligence levels se aayenge.</p>
       `;
       return;
     }
@@ -576,23 +577,23 @@
     const bullishContext = research.regime.tone === "positive" || research.activity.tone === "positive";
     const bearishContext = research.regime.tone === "negative" || research.activity.tone === "negative";
     el.institutionalNextSession.innerHTML = `
-      <div class="institutional-section-heading"><span>Next-session conditional map</span><strong>Levels from stored option-chain intelligence</strong></div>
+      <div class="institutional-section-heading"><span>Kal ka conditional plan</span><strong>Stored option-chain levels ke saath</strong></div>
       <div class="institutional-level-strip">
-        <span>Prior close <b>${price(priorClose, 0)}</b></span>
+        <span>Pichhla close <b>${price(priorClose, 0)}</b></span>
         <span>OI support <b>${price(support, 0)}</b></span>
         <span>OI resistance <b>${price(resistance, 0)}</b></span>
       </div>
       <div class="institutional-scenario-grid">
-        <article data-tone="positive"><span>Support holds</span><strong>${bullishContext ? "Institutional context supports confirmation" : "Needs fresh bullish proof"}</strong><p>Use only if PE defence persists, ATM premium responds, and completed 5m spot remains above ${price(support, 0)}. Then ${price(resistance, 0)} becomes the first test.</p></article>
-        <article data-tone="negative"><span>Support fails</span><strong>${bearishContext ? "Institutional context supports confirmation" : "Needs fresh bearish proof"}</strong><p>Use only after completed 5m acceptance below ${price(support, 0)} with PE withdrawal or CE writing. A wick below the level is not confirmation.</p></article>
-        <article data-tone="neutral"><span>Between levels</span><strong>No pre-decided direction</strong><p>If live OI remains two-sided between ${price(support, 0)} and ${price(resistance, 0)}, treat FII positioning as background context and wait for an actual wall transition.</p></article>
+        <article data-tone="positive"><span>Agar support hold kare</span><strong>${bullishContext ? "FII background supportive hai" : "Fresh bullish proof chahiye"}</strong><p>Tabhi upside consider karo jab PE defence bana rahe, ATM premium respond kare aur completed 5m spot ${price(support, 0)} ke upar rahe. Uske baad ${price(resistance, 0)} pehla test hoga.</p></article>
+        <article data-tone="negative"><span>Agar support fail ho</span><strong>${bearishContext ? "FII background downside support karta hai" : "Fresh bearish proof chahiye"}</strong><p>${price(support, 0)} ke neeche completed 5m acceptance ke saath PE withdrawal ya CE writing aaye tabhi breakdown valid hai. Sirf wick/sweep breakdown nahi hai.</p></article>
+        <article data-tone="neutral"><span>Agar levels ke beech rahe</span><strong>Pehle se direction decide mat karo</strong><p>${price(support, 0)}–${price(resistance, 0)} ke beech live OI two-sided rahe to FII data sirf background context hai. Actual wall transition ka wait karo.</p></article>
       </div>
     `;
   }
 
   function institutionalMetric(label, value, change, changePct, materiality, meaning, kind) {
     const pctText = changePct === null || changePct === undefined ? "" : ` (${signedPlainPercent(changePct)})`;
-    const rank = materiality && materiality.rank !== null ? `${materiality.label} · P${materiality.rank}` : materiality ? materiality.label : "Position snapshot";
+    const rank = materiality && materiality.rank !== null ? `Change size: ${materiality.label} · 20-session rank ${materiality.rank}/100` : materiality ? materiality.label : "Current position snapshot";
     return `
       <article class="institutional-metric ${escapeHtml(kind)}">
         <span>${escapeHtml(label)}</span>
@@ -612,11 +613,35 @@
   }
 
   function fiveSessionMeaning(five) {
-    if (five.long > 0 && five.short < 0) return `Over ${five.sessions} session${five.sessions === 1 ? "" : "s"}, bullish contracts increased and bearish contracts decreased. Both effects improved the net position.`;
-    if (five.long < 0 && five.short > 0) return `Over ${five.sessions} session${five.sessions === 1 ? "" : "s"}, bullish contracts decreased and bearish contracts increased. Both effects weakened the net position.`;
-    if (five.long > 0 && five.short > 0) return `Both sides added exposure; ${five.net >= 0 ? "longs grew faster" : "shorts grew faster"}. This can include hedging.`;
-    if (five.long < 0 && five.short < 0) return `Both sides reduced exposure; ${five.net >= 0 ? "short covering was larger" : "long reduction was larger"}. This is position reduction, not fresh buildup.`;
-    return "The five-session long and short changes do not form a clean directional combination.";
+    if (five.long > 0 && five.short < 0) return `Pichhle ${five.sessions} sessions me longs add hue aur shorts close hue. Dono effects ne FII net position improve ki. Agar persistence high hai to bearish pressure consistently kam ho raha hai.`;
+    if (five.long < 0 && five.short > 0) return `Pichhle ${five.sessions} sessions me longs close hue aur shorts add hue. Dono effects ne FII position ko zyada bearish banaya.`;
+    if (five.long > 0 && five.short > 0) return `Longs aur shorts dono add hue; ${five.net >= 0 ? "longs faster badhe" : "shorts faster badhe"}. Yeh hedging bhi ho sakti hai, isliye clean direction nahi hai.`;
+    if (five.long < 0 && five.short < 0) return `Longs aur shorts dono reduce hue; ${five.net >= 0 ? "short covering zyada thi" : "long reduction zyada tha"}. Yeh exposure exit hai, fresh buildup nahi.`;
+    return "Long aur short changes ek clean directional combination nahi bana rahe.";
+  }
+
+  function institutionalPlainRead(research) {
+    const latest = research.latest;
+    const today = research.today;
+    const five = research.five;
+    const materiality = research.materiality.net;
+    const current = latest.net < 0
+      ? `FIIs abhi bhi ${compact(Math.abs(latest.net))} contracts net short hain.`
+      : latest.net > 0
+        ? `FIIs abhi ${compact(latest.net)} contracts net long hain.`
+        : "FII longs aur shorts abhi balanced hain.";
+    const multiSession = five.available
+      ? `Pichhle ${five.sessions} sessions me net position ${signedCompact(five.net)} change hui aur ${five.netImprovedSessions}/${five.sessions} sessions improvement dikhi.`
+      : "Multi-session trend abhi build ho raha hai.";
+    const todaySize = materiality && materiality.rank !== null
+      ? `Aaj ka ${signedCompact(today.net)} net change ${materiality.label.toLowerCase()} hai (20-session rank ${materiality.rank}/100).`
+      : `Aaj net position ${signedCompact(today.net)} change hui.`;
+    const conclusion = research.regime.label === "BEARISH PRESSURE EASING"
+      ? "Isliye bearish pressure kam ho raha hai, lekin direct bullish signal abhi nahi hai."
+      : research.regime.label === "BULLISH PRESSURE EASING"
+        ? "Isliye bullish pressure kam ho raha hai, lekin direct bearish signal abhi nahi hai."
+        : research.regime.meaning;
+    return `${current} ${multiSession} ${todaySize} ${conclusion}`;
   }
 
   function signedCompact(value) {

@@ -166,6 +166,7 @@ The bottom-most collapsed card uses the official NSE participant-wise open-inter
 - first use restores the latest 30 calendar days; the daily server job backfills 45 calendar days and keeps the latest 21 verified trading sessions available for analysis
 - `net change = change in index-futures longs - change in index-futures shorts`; closing shorts therefore improves net position because a negative short change is subtracted
 - current posture, today's activity, five-session persistence, and change materiality are shown separately so a one-day improvement is not confused with an already net-long position
+- the top verdict is written in plain Hinglish and explicitly separates `net short but improving` from genuine `risk-on`; heavily net-short FIIs are labelled `BEARISH PRESSURE EASING` until posture, material activity, multi-session trend, and cash flow align
 - index options are shown as hedging context only; they do not independently produce a bullish or bearish verdict
 - next-session support and resistance come from the same stored option-chain levels used by Market Structure Intelligence and remain conditional on fresh completed-5m OI confirmation
 - the Telegram-style Market Mood Index is intentionally excluded because its formula and audit trail are not published by NSE

@@ -179,11 +179,11 @@ const calibrationGuards = [
 for (const guard of [
   "loadInstitutionalResearch()",
   "/api/institutional/research",
-  "Long change",
+  "Aaj Net Position Change",
   "signedCompact(today.long)} − (${signedCompact(today.short)})",
-  "Index-options context",
-  "Next-session conditional map",
-  "same stored Market Structure Intelligence levels"
+  "Index options me position change",
+  "Kal ka conditional plan",
+  "institutionalPlainRead(research)"
 ]) {
   if (!app.includes(guard)) {
     console.error(`Missing institutional research UI guard: ${guard}`);
@@ -523,7 +523,7 @@ if (
 }
 
 const { parseParticipantOi } = require(path.resolve(__dirname, "..", "lib/nse-institutional.js"));
-const { buildInstitutionalResearch } = require(path.resolve(__dirname, "..", "lib/institutional-research.js"));
+const { buildInstitutionalResearch, classifyRegime } = require(path.resolve(__dirname, "..", "lib/institutional-research.js"));
 const participantFixture = `""Participant wise Open Interest (no. of contracts) in Equity Derivatives as on Jun 15, 2026"",,,,,,,,,,,,,,
 Client Type,Future Index Long,Future Index Short,Future Stock Long,Future Stock Short,Option Index Call Long,Option Index Put Long,Option Index Call Short,Option Index Put Short,Option Stock Call Long,Option Stock Put Long,Option Stock Call Short,Option Stock Put Short,Total Long Contracts,Total Short Contracts
 FII,41074,282315,4135474,3344880,672396,1145247,924723,600061,236813,332125,378538,234653,6563129,5765169
@@ -561,6 +561,26 @@ if (
   || institutionalResearch.activity.key !== "bullish-repositioning"
 ) {
   console.error("Institutional long-short-net arithmetic regression failed");
+  process.exit(1);
+}
+const easingRegime = classifyRegime(
+  { key: "heavy-short", tone: "negative" },
+  { key: "little-change", tone: "neutral" },
+  { available: true, net: 36400, short: -20100 },
+  { available: true, today: 200.05 }
+);
+if (easingRegime.label !== "BEARISH PRESSURE EASING" || easingRegime.tone !== "warn") {
+  console.error("Heavily net-short improvement must not be labelled risk-on");
+  process.exit(1);
+}
+const riskOnRegime = classifyRegime(
+  { key: "net-long", tone: "positive" },
+  { key: "bullish-repositioning", tone: "positive" },
+  { available: true, net: 50000, short: -20000 },
+  { available: true, today: 1500 }
+);
+if (riskOnRegime.label !== "RISK-ON BUILDING") {
+  console.error("Risk-on must require bullish posture, activity, persistence, and cash agreement");
   process.exit(1);
 }
 
