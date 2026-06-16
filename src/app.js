@@ -16,6 +16,7 @@
   const EVENT_TOAST_MS = 60 * 1000;
   const EVENT_STORAGE_VERSION = 2;
   const EVENT_MAX_ITEMS = 80;
+  const STOCK_SCANNER_INTERVAL_MS = 60 * 1000;
   const WALL_SCAN_STRIKES = 11;
   const IMMEDIATE_WALL_STRIKES = 11;
   const MAX_CONFIRMED_RANGE_POINTS = 100;
@@ -52,6 +53,9 @@
     institutionalResearch: null,
     institutionalReason: "Loading verified NSE EOD data",
     institutionalLastChecked: 0,
+    stockScanner: null,
+    stockScannerReason: "Loading stock-options radar",
+    stockScannerLastChecked: 0,
     eventTape: freshEventTapeState(),
     structureStability: {
       key: null,
@@ -84,6 +88,7 @@
     await refresh();
     await loadSessionPlaybook();
     await loadInstitutionalResearch();
+    await refreshStockScanner(true);
     scheduleNext();
   }
 
@@ -106,7 +111,10 @@
       "eventToastStack", "eventDrawerBackdrop", "eventDrawer", "eventDrawerClose", "eventDrawerSummary", "eventTape",
       "institutionalDesk", "institutionalDeskTitle", "institutionalDeskSummary", "institutionalDeskDate", "institutionalDeskState",
       "institutionalVerdict", "institutionalMetrics", "institutionalPattern", "institutionalCash", "institutionalOptions",
-      "institutionalNextSession", "institutionalFooter"
+      "institutionalNextSession", "institutionalFooter",
+      "stockOptionsRadar", "stockRadarTitle", "stockRadarMeta", "stockCapital", "stockRadarRefresh",
+      "stockRadarSummary", "stockPicksGrid", "stockWatchTable", "stockRadarSources",
+      "stockRadarButton", "stockRadarButtonText", "stockRadarBadge", "stockRadarDrawer", "stockRadarClose", "stockRadarBackdrop"
     ].forEach((id) => {
       el[id] = document.getElementById(id);
     });
@@ -124,6 +132,11 @@
     el.themeToggle.addEventListener("click", toggleTheme);
     el.refreshButton.addEventListener("click", refresh);
     el.pauseButton.addEventListener("click", togglePause);
+    el.stockRadarButton.addEventListener("click", openStockRadar);
+    el.stockRadarClose.addEventListener("click", closeStockRadar);
+    el.stockRadarBackdrop.addEventListener("click", closeStockRadar);
+    el.stockRadarRefresh.addEventListener("click", () => refreshStockScanner(true));
+    el.stockCapital.addEventListener("change", () => refreshStockScanner(true));
     el.exportCalibration.addEventListener("click", exportCalibration);
     el.clearCalibration.addEventListener("click", clearCalibration);
     el.eventCenterButton.addEventListener("click", openEventDrawer);
@@ -210,6 +223,9 @@
     state.outlookLastBucket = null;
     state.sessionPlaybook = null;
     state.playbookLastChecked = 0;
+    state.stockScanner = null;
+    state.stockScannerReason = "Loading stock-options radar";
+    state.stockScannerLastChecked = 0;
     state.eventTape = freshEventTapeState();
     state.structureStability = { key: null, since: null, windows: 0, lastWindowEnd: null };
     state.signalStartSnapshot = null;
@@ -267,6 +283,7 @@
       render();
       maybeLoadResistanceMemory(snapshot);
       maybeRefreshSessionPlaybook(snapshot.time);
+      maybeRefreshStockScanner();
       setSource(`${payload.source === "live" ? "Live Upstox REST" : "Demo mode"} · ${formatTime(snapshot.time)} · ${state.history.length} loaded`);
     } catch (error) {
       setSource(`Data error: ${error.message}`);
@@ -276,6 +293,172 @@
         render();
       }
     }
+  }
+
+  function maybeRefreshStockScanner() {
+    if (Date.now() - state.stockScannerLastChecked < STOCK_SCANNER_INTERVAL_MS) return;
+    refreshStockScanner(false);
+  }
+
+  async function refreshStockScanner(force) {
+    if (!force && Date.now() - state.stockScannerLastChecked < STOCK_SCANNER_INTERVAL_MS) return;
+    state.stockScannerLastChecked = Date.now();
+    renderStockScanner(true);
+    try {
+      const params = new URLSearchParams({
+        capital: el.stockCapital.value || "60000",
+        limit: "16",
+        top: "4"
+      });
+      const response = await fetch(`/api/stocks/scanner?${params.toString()}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(API_TIMEOUT_MS)
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to load stock scanner");
+      state.stockScanner = payload;
+      state.stockScannerReason = "";
+    } catch (error) {
+      state.stockScanner = null;
+      state.stockScannerReason = error.name === "TimeoutError" ? "Stock radar request timed out" : error.message;
+    }
+    renderStockScanner(false);
+  }
+
+  function openStockRadar() {
+    el.stockRadarDrawer.classList.add("open");
+    el.stockRadarDrawer.setAttribute("aria-hidden", "false");
+    el.stockRadarBackdrop.hidden = false;
+    document.body.classList.add("stock-radar-open");
+    if (!state.stockScanner || Date.now() - state.stockScannerLastChecked > STOCK_SCANNER_INTERVAL_MS) {
+      refreshStockScanner(false);
+    }
+  }
+
+  function closeStockRadar() {
+    el.stockRadarDrawer.classList.remove("open");
+    el.stockRadarDrawer.setAttribute("aria-hidden", "true");
+    el.stockRadarBackdrop.hidden = true;
+    document.body.classList.remove("stock-radar-open");
+  }
+
+  function renderStockScanner(loading) {
+    if (!el.stockRadarSummary) return;
+    const payload = state.stockScanner;
+    if (!payload) {
+      renderStockRadarButton(null, loading);
+      el.stockRadarTitle.textContent = loading ? "Scanning liquid NSE F&O stocks" : "Stock radar unavailable";
+      el.stockRadarMeta.textContent = loading ? "Building liquidity, sector, option, and catalyst scores." : state.stockScannerReason;
+      el.stockRadarSummary.innerHTML = `
+        <div><span>Scan state</span><strong>${loading ? "Scanning" : "Unavailable"}</strong><em>${escapeHtml(state.stockScannerReason || "Waiting for route")}</em></div>
+        <div><span>Universe</span><strong>--</strong><em>NSE F&O liquid watchlist</em></div>
+        <div><span>Rule</span><strong>No auto trade</strong><em>Manual confirmation required</em></div>
+      `;
+      el.stockPicksGrid.innerHTML = "";
+      el.stockWatchTable.querySelector("tbody").innerHTML = "";
+      el.stockRadarSources.innerHTML = "";
+      return;
+    }
+
+    renderStockRadarButton(payload, false);
+    el.stockRadarTitle.textContent = `${payload.source === "live" ? "Live" : "Demo"} stock-options radar · ${payload.scanWindow}`;
+    el.stockRadarMeta.textContent = `Capital ${rupees(payload.capital)} · ${payload.universe.scanned}/${payload.universe.available} liquid F&O stocks scanned · ${formatTime(payload.generatedAt)}`;
+    const topPick = payload.picks && payload.picks[0];
+    el.stockRadarSummary.innerHTML = `
+      <div><span>Best candidate</span><strong>${topPick ? escapeHtml(topPick.symbol) : "--"}</strong><em>${topPick ? escapeHtml(topPick.action) : "No top pick"}</em></div>
+      <div><span>Universe</span><strong>${payload.universe.scanned} scanned</strong><em>${escapeHtml(payload.universe.note)}</em></div>
+      <div><span>Guardrail</span><strong>${rupees(Math.min(2000, payload.capital * 0.03))}</strong><em>Suggested max risk per trade</em></div>
+    `;
+    el.stockPicksGrid.innerHTML = (payload.picks || []).map(renderStockPickCard).join("");
+    el.stockWatchTable.querySelector("tbody").innerHTML = (payload.watch || []).map(renderStockWatchRow).join("");
+    el.stockRadarSources.innerHTML = renderStockSourceNotes(payload);
+  }
+
+  function renderStockRadarButton(payload, loading) {
+    if (!el.stockRadarButton) return;
+    const topPick = payload && payload.picks && payload.picks[0];
+    el.stockRadarButton.classList.toggle("loading", Boolean(loading));
+    el.stockRadarButton.classList.toggle("has-pick", Boolean(topPick));
+    el.stockRadarButtonText.textContent = loading ? "Scanning" : topPick ? `${topPick.symbol} ${topPick.direction}` : "Radar";
+    el.stockRadarBadge.textContent = loading ? "..." : topPick ? Math.round(number(topPick.totalScore)) : "--";
+    el.stockRadarButton.title = topPick
+      ? `Open stock options radar: ${topPick.symbol} ${topPick.direction}, score ${Math.round(number(topPick.totalScore))}`
+      : "Open stock options radar";
+  }
+
+  function renderStockPickCard(pick) {
+    const tone = pick.action === "TOP PICK" ? "positive" : pick.action === "WATCH" ? "watch" : "neutral";
+    const contract = pick.contract || {};
+    const sizing = pick.sizing || {};
+    return `
+      <section class="stock-pick-card" data-tone="${tone}">
+        <div class="stock-pick-head">
+          <div>
+            <span>${escapeHtml(pick.action)}</span>
+            <strong>${escapeHtml(pick.symbol)} ${escapeHtml(pick.direction)}</strong>
+          </div>
+          <b>${Math.round(number(pick.totalScore))}</b>
+        </div>
+        <div class="stock-pick-contract">
+          <span>${escapeHtml(pick.expiry || "auto")} · ${contract.strike || "--"} ${escapeHtml(contract.side || "")}</span>
+          <strong>Mid ${price(contract.mid)} · Spread ${percent(contract.spreadPct)}</strong>
+        </div>
+        <div class="stock-score-strip">
+          <span>Liq <b>${scoreText(pick.score.liquidity, 35)}</b></span>
+          <span>Mom <b>${scoreText(pick.score.momentum, 30)}</b></span>
+          <span>Sec <b>${scoreText(pick.score.sector, 15)}</b></span>
+          <span>Opt <b>${scoreText(pick.score.option, 15)}</b></span>
+        </div>
+        <ul class="stock-reasons">
+          ${(pick.reasons || []).slice(0, 4).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
+        </ul>
+        <footer>
+          <span>${escapeHtml(pick.invalidation || "Invalidation building")}</span>
+          <b>${sizing.lotCost ? `Lot ${rupees(sizing.lotCost)}` : "Lot size unknown"}</b>
+        </footer>
+      </section>
+    `;
+  }
+
+  function renderStockWatchRow(pick) {
+    const contract = pick.contract || {};
+    const sizing = pick.sizing || {};
+    return `
+      <tr>
+        <td><strong>${escapeHtml(pick.symbol)}</strong><span>${escapeHtml(pick.action)}</span></td>
+        <td>${escapeHtml(pick.direction)}</td>
+        <td>${Math.round(number(pick.totalScore))}</td>
+        <td>${signedPercent(pick.move && pick.move.intradayPct)}<span>gap ${signedPercent(pick.move && pick.move.gapPct)}</span></td>
+        <td>${escapeHtml(pick.sectorIndex || "--")}<span>${signedPercent(pick.sectorBenchmark && pick.sectorBenchmark.changePct)}</span></td>
+        <td>${contract.strike || "--"} ${escapeHtml(contract.side || "")}<span>Delta ${contract.delta ? number(contract.delta).toFixed(2) : "--"}</span></td>
+        <td>${escapeHtml(sizing.note || pick.invalidation || "--")}</td>
+      </tr>
+    `;
+  }
+
+  function renderStockSourceNotes(payload) {
+    const rules = (payload.rules || []).map((rule) => `<li>${escapeHtml(rule)}</li>`).join("");
+    const sources = (payload.sources || []).map((source) => (
+      `<a href="${escapeHtml(source.url)}" target="_blank" rel="noreferrer">${escapeHtml(source.label)}</a>`
+    )).join("");
+    return `
+      <div class="stock-source-grid">
+        <section><strong>Rules</strong><ul>${rules}</ul></section>
+        <section><strong>Verified source map</strong><div>${sources}</div></section>
+      </div>
+    `;
+  }
+
+  function scoreText(value, max) {
+    return `${Math.round(number(value))}/${max}`;
+  }
+
+  function percent(value) {
+    return `${(number(value) * 100).toFixed(1)}%`;
+  }
+
+  function rupees(value) {
+    return `₹${Math.round(number(value)).toLocaleString("en-IN")}`;
   }
 
   async function loadResistanceMemory() {

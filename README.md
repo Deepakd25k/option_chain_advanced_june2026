@@ -20,6 +20,7 @@ Formula-backed intraday option-chain dashboard for Indian index option buyers. I
 - Calibration Lab: browser-local session recorder, 3m/5m/10m outcome tracking, and threshold suggestions.
 - Outcome Tracker and Formula Rulebook stay collapsed until opened.
 - Mobile responsive layout.
+- Stock Options Radar: 09:20-09:25 style scanner for a liquid NSE F&O stock watchlist, with CE/PE bias, liquidity/momentum/sector/option/catalyst scoring, capital guardrails, and reasons for each pick.
 - Neon Postgres session recorder: restores the open baseline and exact rolling windows after refresh or redeploy.
 - Institutional Research Desk: collapsed EOD card built from verified NSE participant-wise OI and daily FII/DII cash data, with simple long/short/net meanings and conditional next-session context.
 
@@ -198,6 +199,14 @@ The serverless function calls Upstox:
 ```text
 https://api.upstox.com/v2/option/chain
 ```
+
+The stock-options radar calls:
+
+```text
+/api/stocks/scanner
+```
+
+Without credentials it runs in demo mode. With `UPSTOX_ACCESS_TOKEN`, it resolves stock instruments, fetches stock option chains, sector quotes, and attempts NSE announcement context. The full design notes are in `docs/stock-options-radar.md`.
 
 ## Important Architecture Note
 

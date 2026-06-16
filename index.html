@@ -412,6 +412,67 @@
       <div class="event-tape" id="eventTape"></div>
     </aside>
 
+    <button class="stock-radar-fab" id="stockRadarButton" type="button" title="Open stock options radar" aria-label="Open stock options radar">
+      <span>Stocks</span>
+      <strong id="stockRadarButtonText">Radar</strong>
+      <b id="stockRadarBadge">--</b>
+    </button>
+    <div class="stock-radar-backdrop" id="stockRadarBackdrop" hidden></div>
+    <aside class="stock-radar-drawer" id="stockRadarDrawer" aria-label="Stock Options Radar" aria-hidden="true">
+      <header>
+        <div>
+          <p class="eyebrow">Stock Options Radar</p>
+          <h2>Floating NSE F&amp;O stock scanner</h2>
+        </div>
+        <button class="icon-button" id="stockRadarClose" type="button" title="Close stock radar" aria-label="Close stock radar">×</button>
+      </header>
+      <article class="stock-radar" id="stockOptionsRadar">
+        <div class="panel-heading stock-radar-heading">
+          <div>
+            <h2 id="stockRadarTitle">Scanning liquid NSE F&amp;O stocks for 09:20-09:25 momentum</h2>
+            <p class="stock-radar-meta" id="stockRadarMeta">Liquidity, sector benchmark, option delta, spread, OI, and verified catalyst context.</p>
+          </div>
+          <div class="stock-radar-controls">
+            <label>
+              <span>Capital</span>
+              <select id="stockCapital">
+                <option value="50000">₹50k</option>
+                <option value="60000" selected>₹60k</option>
+                <option value="100000">₹1L</option>
+              </select>
+            </label>
+            <button class="text-button" id="stockRadarRefresh" type="button">Refresh Radar</button>
+          </div>
+        </div>
+        <div class="stock-radar-summary" id="stockRadarSummary">
+          <div><span>Scan state</span><strong>Building</strong><em>Live route loading</em></div>
+          <div><span>Universe</span><strong>--</strong><em>NSE F&amp;O stock watchlist</em></div>
+          <div><span>Rule</span><strong>No auto trade</strong><em>Only ranked candidates</em></div>
+        </div>
+        <div class="stock-picks-grid" id="stockPicksGrid"></div>
+        <div class="table-wrap stock-watch-table">
+          <table id="stockWatchTable">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Bias</th>
+                <th>Score</th>
+                <th>Move</th>
+                <th>Sector</th>
+                <th>Contract</th>
+                <th>Risk note</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <details class="stock-source-notes">
+          <summary>Source and formula notes</summary>
+          <div id="stockRadarSources"></div>
+        </details>
+      </article>
+    </aside>
+
     <script src="/lib/expected-move.js"></script>
     <script src="/lib/fifteen-minute-outlook.js"></script>
     <script src="/src/app.js"></script>

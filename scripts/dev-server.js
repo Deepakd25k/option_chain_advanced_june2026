@@ -9,6 +9,7 @@ const resistanceMemoryHandler = require("../api/session/resistance-memory");
 const cronCaptureHandler = require("../api/cron/capture");
 const institutionalResearchHandler = require("../api/institutional/research");
 const institutionalCronHandler = require("../api/cron/institutional");
+const stockScannerHandler = require("../api/stocks/scanner");
 
 const root = path.resolve(__dirname, "..");
 loadLocalEnv(path.join(root, ".env.local"));
@@ -91,6 +92,13 @@ const server = http.createServer(async (req, res) => {
     req.query = Object.fromEntries(url.searchParams.entries());
     attachResponseHelpers(res);
     await institutionalResearchHandler(req, res);
+    return;
+  }
+
+  if (url.pathname === "/api/stocks/scanner") {
+    req.query = Object.fromEntries(url.searchParams.entries());
+    attachResponseHelpers(res);
+    await stockScannerHandler(req, res);
     return;
   }
 
